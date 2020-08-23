@@ -177,3 +177,8 @@ public class Version  {
 
 > 接着控制台在 ZooKeeper 启动的第一句就会打印出：Spongecaptain Welcome to ZooKeeper!
 
+如果出现 `log4j:WARN No appenders could be found for logger (org.apache.zookeeper.server.quorum.QuorumPeerConfig).` 错误，那么最大的可能你在 GIT 项目后没有在 IDEA 中将  `zookeeper-server/src/main/resources` 路径下右击设置为 root-resources 目录。
+
+## 6. Mac 下运行
+
+如果你在 Mac 下运行，那么仅仅需要修改配置文件 zoo.cfg，将 `dataDir=E:\\zkData/data1` 修改为 `/usr/local/zkData`。
