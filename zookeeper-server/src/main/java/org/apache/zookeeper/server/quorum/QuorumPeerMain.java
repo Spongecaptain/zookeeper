@@ -120,6 +120,7 @@ public class QuorumPeerMain {
     }
 
     protected void initializeAndRun(String[] args) throws ConfigException, IOException, AdminServerException {
+        //1.解析配置文件(文件 --解析为--> Java 堆内实例)
         QuorumPeerConfig config = new QuorumPeerConfig();
         if (args.length == 1) {
             config.parse(args[0]);
@@ -131,12 +132,15 @@ public class QuorumPeerMain {
             config.getDataLogDir(),
             config.getSnapRetainCount(),
             config.getPurgeInterval());
+        //2. 启动清理任务（内存快照以及事务日志等持久化文件的清理，其基于 TimeTask 来完成定时清理任务的执行，即异步线程）
         purgeMgr.start();
 
         if (args.length == 1 && config.isDistributed()) {
+            //3. 集群模式下启动单个 ZooKeeper 服务端实例（也就是当前 ZooKeeper 服务端实例）
             runFromConfig(config);
         } else {
             LOG.warn("Either no config or no quorum defined in config, running in standalone mode");
+            //4. 单机模式下启动当前 ZooKeeper 服务端实例
             // there is only server in the quorum -- run as standalone
             ZooKeeperServerMain.main(args);
         }
