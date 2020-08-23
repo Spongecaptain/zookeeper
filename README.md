@@ -1,6 +1,10 @@
 # Apache ZooKeeper [![Build Status](https://travis-ci.org/apache/zookeeper.svg?branch=master)](https://travis-ci.org/apache/zookeeper) [![Maven Central](https://img.shields.io/maven-central/v/org.apache.zookeeper/zookeeper)](https://zookeeper.apache.org/releases.html) [![License](https://img.shields.io/github/license/apache/zookeeper)](https://github.com/apache/zookeeper/blob/master/LICENSE.txt)
 ![alt text](https://zookeeper.apache.org/images/zookeeper_small.gif "ZooKeeper")
 
+> This Repository is for personal learning and adding comments is the most frequent modifies.
+> 这个仓库用于个人学习，最常见的修改便是添加相关注释。
+
+
 For the latest information about Apache ZooKeeper, please visit our website at:
 
    http://zookeeper.apache.org/
