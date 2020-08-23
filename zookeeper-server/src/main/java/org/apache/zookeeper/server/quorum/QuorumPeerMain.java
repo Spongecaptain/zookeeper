@@ -85,6 +85,7 @@ public class QuorumPeerMain {
      * @param args path to the configfile
      */
     public static void main(String[] args) {
+        System.out.println("Spongecaptain Welcome to ZooKeeper!");
         QuorumPeerMain main = new QuorumPeerMain();
         try {
             main.initializeAndRun(args);
