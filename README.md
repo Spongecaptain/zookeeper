@@ -2,7 +2,7 @@
 ![alt text](https://zookeeper.apache.org/images/zookeeper_small.gif "ZooKeeper")
 
 > This Repository is for personal learning and adding comments is the most frequent modifies.
-> 这个仓库用于个人学习，最常见的修改便是添加相关注释。
+> 这个仓库用于个人学习，最常见的修改便是添加相关注释。如果你想了解具体的配置过程，可以参考 [runZooKeeperProject.md](https://github.com/Spongecaptain/zookeeper/runproject/runZooKeeperProject.md)
 
 
 For the latest information about Apache ZooKeeper, please visit our website at:
