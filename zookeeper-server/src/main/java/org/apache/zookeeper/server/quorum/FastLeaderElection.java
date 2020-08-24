@@ -685,6 +685,7 @@ public class FastLeaderElection implements Election {
 
     /**
      * Send notifications to all peers upon a change in our vote
+     * 给集群中的所有节点（包括自己）发送自己在这一轮中的投票决定
      */
     private void sendNotifications() {
         for (long sid : self.getCurrentAndNextConfigVoters()) {
@@ -819,9 +820,9 @@ public class FastLeaderElection implements Election {
             proposedLeader,
             Long.toHexString(proposedZxid));
 
-        proposedLeader = leader;
-        proposedZxid = zxid;
-        proposedEpoch = epoch;
+        proposedLeader = leader;//当前节点打算投给谁，认为哪一个节点应当是 Leader 节点
+        proposedZxid = zxid;//当前节点最大的事务 id
+        proposedEpoch = epoch;//当前节点的 epoch （任期）
     }
 
     public synchronized Vote getVote() {
@@ -923,7 +924,7 @@ public class FastLeaderElection implements Election {
              * if v.electionEpoch == logicalclock. The current participant uses recvset to deduce on whether a majority
              * of participants has voted for it.
              */
-            Map<Long, Vote> recvset = new HashMap<Long, Vote>();
+            Map<Long, Vote> recvset = new HashMap<Long, Vote>();//这充当了投票箱的作用，有：key 为其他服务其的 sid，Vote 对应服务器的投票决定
 
             /*
              * The votes from previous leader elections, as well as the votes from the current leader election are
@@ -938,6 +939,7 @@ public class FastLeaderElection implements Election {
 
             synchronized (this) {
                 logicalclock.incrementAndGet();
+                //更新提议
                 updateProposal(getInitId(), getInitLastLoggedZxid(), getPeerEpoch());
             }
 
@@ -945,7 +947,7 @@ public class FastLeaderElection implements Election {
                 "New election. My id = {}, proposed zxid=0x{}",
                 self.getId(),
                 Long.toHexString(proposedZxid));
-            sendNotifications();
+            sendNotifications();// 将投票决定发送给所有节点（包括自己）
 
             SyncedLearnerTracker voteSet;
 

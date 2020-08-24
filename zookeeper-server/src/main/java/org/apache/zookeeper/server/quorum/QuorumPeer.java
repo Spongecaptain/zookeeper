@@ -1075,7 +1075,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         if (!getView().containsKey(myid)) {
             throw new RuntimeException("My id " + myid + " not in the peer list");
         }
+        //1. loadDataBase() 方法用于将内存的快照 snapshot 以及 transaction log 反序列化到内存中
         loadDataBase();
+        //2. 启动监听客户端连接的 Socket 线程（ZAB 协议中，不仅仅只有 Leader 节点能够处理请求）
         startServerCnxnFactory();
         try {
             adminServer.start();
@@ -1083,8 +1085,11 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             LOG.warn("Problem starting AdminServer", e);
             System.out.println(e);
         }
+        //3. 开始 Leader 节点的选举线程
         startLeaderElection();
+        //4. 启动监听 JVM 性能的线程
         startJvmPauseMonitor();
+        //5. QuorumPeer 本身也是一条线程，此线程用于监听本地 ZooKeeper 服务端的状态（这个线程是真正进行领导者选举的方法？）
         super.start();
     }
 

@@ -88,6 +88,7 @@ public class QuorumPeerMain {
         System.out.println("Spongecaptain Welcome to ZooKeeper!");
         QuorumPeerMain main = new QuorumPeerMain();
         try {
+            //1. QuorumPeerMain.main() 方法主要的执行逻辑实际上是由 QuorumPeerMain.initializeAndRun(String[] args) 方法来完成的
             main.initializeAndRun(args);
         } catch (IllegalArgumentException e) {
             LOG.error("Invalid arguments, exiting abnormally", e);
@@ -228,9 +229,11 @@ public class QuorumPeerMain {
             if (config.jvmPauseMonitorToRun) {
                 quorumPeer.setJvmPauseMonitor(new JvmPauseMonitor(config));
             }
-
+            //1. 利用 QuorumPeer.start() 方法来启动集群中的当前节点的 Main Loop（通常，Java 中间件的 Main Loop 用于实现中间件的主要逻辑）
             quorumPeer.start();
             ZKAuditProvider.addZKStartStopAuditLog();
+            //2. 此时线程是 Main 线程，也就是 QuorumPeerMain.main(String[] args) 方法对应的线程
+            //而 quorumPeer 也是一个线程，这里使用 join() 方法来进行线程间通信：Main 线程不能早于 quorumPeer 实例的线程运行结束(启动线程等待任务线程的执行结束)
             quorumPeer.join();
         } catch (InterruptedException e) {
             // warn, but generally this is ok
