@@ -1075,7 +1075,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         if (!getView().containsKey(myid)) {
             throw new RuntimeException("My id " + myid + " not in the peer list");
         }
-        //1. loadDataBase() 方法用于将内存的快照 snapshot 以及 transaction log 反序列化到内存中
+        //1. loadDataBase() 方法用于将内存的快照 snapshot 文件以及 transaction log 反序列化到内存中
         loadDataBase();
         //2. 启动监听客户端连接的 Socket 线程（ZAB 协议中，不仅仅只有 Leader 节点能够处理请求）
         startServerCnxnFactory();
@@ -1085,11 +1085,12 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             LOG.warn("Problem starting AdminServer", e);
             System.out.println(e);
         }
-        //3. 开始 Leader 节点的选举线程
+        //3. 开始选举线程(用于选举 Leader 服务器)
         startLeaderElection();
         //4. 启动监听 JVM 性能的线程
         startJvmPauseMonitor();
         //5. QuorumPeer 本身也是一条线程，此线程用于监听本地 ZooKeeper 服务端的状态（这个线程是真正进行领导者选举的方法？）
+        //换句话说，即启动异步线程执行 QuorumPeer 的 run() 方法
         super.start();
     }
 
@@ -1098,6 +1099,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             zkDb.loadDataBase();
 
             // load the epochs
+            //Zxid 的格式为:高 32 位为 epoch 值，低 32 位为自增的 proposalID，这里就是简单地分高低位读取一个 long 类型数值
             long lastProcessedZxid = zkDb.getDataTree().lastProcessedZxid;
             long epochOfZxid = ZxidUtils.getEpochFromZxid(lastProcessedZxid);
             try {

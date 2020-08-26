@@ -83,13 +83,16 @@ public class QuorumPeerMain {
      * To start the replicated server specify the configuration file name on
      * the command line.
      * @param args path to the configfile
+     *
+     * Spongecaptain:不管 ZooKeeper 是集群模式（包括伪集群模式）还是单机模式，这是 ZooKeeper 服务端启动类的入口
      */
     public static void main(String[] args) {
-        System.out.println("Spongecaptain Welcome to ZooKeeper!");
+        System.out.println("Spongecaptain Welcome to ZooKeeper!");//自己额外缇娜及
         QuorumPeerMain main = new QuorumPeerMain();
         try {
             //1. QuorumPeerMain.main() 方法主要的执行逻辑实际上是由 QuorumPeerMain.initializeAndRun(String[] args) 方法来完成的
             main.initializeAndRun(args);
+            //2. 下面的内容主要是异常的捕获，并不是启动时的主要逻辑
         } catch (IllegalArgumentException e) {
             LOG.error("Invalid arguments, exiting abnormally", e);
             LOG.info(USAGE);
@@ -137,11 +140,11 @@ public class QuorumPeerMain {
         purgeMgr.start();
 
         if (args.length == 1 && config.isDistributed()) {
-            //3. 集群模式下启动单个 ZooKeeper 服务端实例（也就是当前 ZooKeeper 服务端实例）
+            //3. 集群模式下，通过配置类 QuorumPeerConfig 来启动单个 ZooKeeper 服务端实例（也就是当前 ZooKeeper 服务端实例）
             runFromConfig(config);
         } else {
             LOG.warn("Either no config or no quorum defined in config, running in standalone mode");
-            //4. 单机模式下启动当前 ZooKeeper 服务端实例
+            //4. 单机模式下，启动当前 ZooKeeper 服务端实例
             // there is only server in the quorum -- run as standalone
             ZooKeeperServerMain.main(args);
         }
@@ -178,6 +181,7 @@ public class QuorumPeerMain {
                 secureCnxnFactory.configure(config.getSecureClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), true);
             }
 
+            //1. 这里主要是通过配置文件实例 QuorumPeerConfig config 来读取配置信息，然后通过 set 方法将配置信息注入到 QuorumPeer 线程实例中
             quorumPeer = getQuorumPeer();
             quorumPeer.setTxnFactory(new FileTxnSnapLog(config.getDataLogDir(), config.getDataDir()));
             quorumPeer.enableLocalSessions(config.areLocalSessionsEnabled());
@@ -214,7 +218,7 @@ public class QuorumPeerMain {
             quorumPeer.setMultiAddressReachabilityCheckEnabled(config.isMultiAddressReachabilityCheckEnabled());
             quorumPeer.setMultiAddressReachabilityCheckTimeoutMs(config.getMultiAddressReachabilityCheckTimeoutMs());
 
-            // sets quorum sasl authentication configurations
+                // sets quorum sasl authentication configurations
             quorumPeer.setQuorumSaslEnabled(config.quorumEnableSasl);
             if (quorumPeer.isQuorumSaslAuthEnabled()) {
                 quorumPeer.setQuorumServerSaslRequired(config.quorumServerRequireSasl);
@@ -229,16 +233,17 @@ public class QuorumPeerMain {
             if (config.jvmPauseMonitorToRun) {
                 quorumPeer.setJvmPauseMonitor(new JvmPauseMonitor(config));
             }
-            //1. 利用 QuorumPeer.start() 方法来启动集群中的当前节点的 Main Loop（通常，Java 中间件的 Main Loop 用于实现中间件的主要逻辑）
-            quorumPeer.start();
+            //2. 利用 QuorumPeer.start() 方法来启动集群中的当前节点的 Main Loop（通常，Java 中间件的 Main Loop 用于实现中间件的主要逻辑）
+            quorumPeer.start();//特别注意：这是一个异步执行逻辑
             ZKAuditProvider.addZKStartStopAuditLog();
-            //2. 此时线程是 Main 线程，也就是 QuorumPeerMain.main(String[] args) 方法对应的线程
-            //而 quorumPeer 也是一个线程，这里使用 join() 方法来进行线程间通信：Main 线程不能早于 quorumPeer 实例的线程运行结束(启动线程等待任务线程的执行结束)
+            //3. 此时线程是 Main 线程，也就是 QuorumPeerMain.main(String[] args) 方法对应的线程
+            //而 QuorumPeer 也是一个线程，这里使用 join() 方法来进行线程间通信：Main 线程不能早于 quorumPeer 实例的线程运行结束(启动线程等待任务线程的执行结束)
             quorumPeer.join();
         } catch (InterruptedException e) {
             // warn, but generally this is ok
             LOG.warn("Quorum Peer interrupted", e);
         } finally {
+            //QuorumPeer 线程在执行结束（抛出异常或者正常执行结束）后，main 线程停止阻塞，开始执行 finally 语句块中的逻辑
             if (metricsProvider != null) {
                 try {
                     metricsProvider.stop();

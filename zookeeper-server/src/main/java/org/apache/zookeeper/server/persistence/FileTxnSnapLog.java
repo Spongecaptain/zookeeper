@@ -53,12 +53,12 @@ public class FileTxnSnapLog {
 
     //the directory containing the
     //the transaction logs
-    final File dataDir;
+    final File dataDir;// 事务文件 句柄
     //the directory containing the
     //the snapshot directory
-    final File snapDir;
-    TxnLog txnLog;
-    SnapShot snapLog;
+    final File snapDir;// 快照文件 句柄
+    TxnLog txnLog;// 事务Log
+    SnapShot snapLog;// 快照Log
     private final boolean autoCreateDB;
     private final boolean trustEmptySnapshot;
     public static final int VERSION = 2;
@@ -240,8 +240,10 @@ public class FileTxnSnapLog {
      * @return the highest zxid restored
      * @throws IOException
      */
+    // 反序列化：把文件系统中的数据文件还原到 DataTree 中，ZooKeeper 启动的时候调用，返回值是本地（快照以及日志）中最大的 zxid
     public long restore(DataTree dt, Map<Long, Integer> sessions, PlayBackListener listener) throws IOException {
         long snapLoadingStartTime = Time.currentElapsedTime();
+        //(Step 1)遍历快照文件，生成树。
         long deserializeResult = snapLog.deserialize(dt, sessions);
         ServerMetrics.getMetrics().STARTUP_SNAP_LOAD_TIME.add(Time.currentElapsedTime() - snapLoadingStartTime);
         FileTxnLog txnLog = new FileTxnLog(dataDir);
@@ -253,7 +255,8 @@ public class FileTxnSnapLog {
         } else {
             trustEmptyDB = autoCreateDB;
         }
-
+        // 通过快照生成的 dataTree 有可能是落后与版本的，此时需要通过 事务日志 在快照的基础上，回放部分事务，并获得最新的数据
+        // (Step 2)具体的做法：根据当前dt的最大事务数据为起点，回放后面的事务
         RestoreFinalizer finalizer = () -> {
             long highestZxid = fastForwardFromEdits(dt, sessions, listener);
             // The snapshotZxidDigest will reset after replaying the txn of the
@@ -268,9 +271,11 @@ public class FileTxnSnapLog {
                         Long.toHexString(highestZxid),
                         Long.toHexString(snapshotZxidDigest.getZxid()));
             }
+            // (Step 3)返回当前最大的 zxId
             return highestZxid;
         };
 
+        //如果找不到数据库，就尝试重新建造一个数据库
         if (-1L == deserializeResult) {
             /* this means that we couldn't find any snapshot, so we need to
              * initialize an empty database (reported in ZOOKEEPER-2325) */
@@ -299,7 +304,7 @@ public class FileTxnSnapLog {
                 return -1L;
             }
         }
-
+        // 执行回放，并返回最大的 zxid
         return finalizer.run();
     }
 
@@ -461,6 +466,7 @@ public class FileTxnSnapLog {
      * @param syncSnap sync the snapshot immediately after write
      * @throws IOException
      */
+    //序列化：把内存中的 DataTree 序列化到文件系统中的快照文件
     public void save(
         DataTree dataTree,
         ConcurrentHashMap<Long, Integer> sessionsWithTimeouts,

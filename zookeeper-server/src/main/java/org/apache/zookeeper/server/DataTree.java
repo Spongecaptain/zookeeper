@@ -102,11 +102,11 @@ public class DataTree {
      * This map provides a fast lookup to the datanodes. The tree is the
      * source of truth and is where all the locking occurs
      */
-    private final NodeHashMap nodes;
+    private final NodeHashMap nodes;// 全路径 -> DataNode 的 HashMap 映射
 
-    private IWatchManager dataWatches;
+    private IWatchManager dataWatches;// 观察 data 变化的 Watcher
 
-    private IWatchManager childWatches;
+    private IWatchManager childWatches;// 观察 child node 的 Watcher
 
     /** cached total size of paths and data for all DataNodes */
     private final AtomicLong nodeDataSize = new AtomicLong(0);
@@ -141,7 +141,7 @@ public class DataTree {
     /**
      * the path trie that keeps track of the quota nodes in this datatree
      */
-    private final PathTrie pTrie = new PathTrie();
+    private final PathTrie pTrie = new PathTrie(); //前缀树，提供树的数据结构，响应客户端的操作，包括遍历、查找之类的操作
 
     /**
      * over-the-wire size of znode's stat. Counting the fields of Stat class
@@ -868,7 +868,7 @@ public class DataTree {
         compareDigest(header, txn, digest);
         return result;
     }
-
+    //processTxn() 方法用于响应事务，对节点进行：增、删、改
     public ProcessTxnResult processTxn(TxnHeader header, Record txn) {
         return this.processTxn(header, txn, false);
     }
@@ -1367,12 +1367,12 @@ public class DataTree {
             oa.writeString("/", "path");
         }
     }
-
+    //序列化方法
     public void serialize(OutputArchive oa, String tag) throws IOException {
         serializeAcls(oa);
         serializeNodes(oa);
     }
-
+    //反序列化方法
     public void deserialize(InputArchive ia, String tag) throws IOException {
         aclCache.deserialize(ia);
         nodes.clear();
