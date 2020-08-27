@@ -86,6 +86,7 @@ public class QuorumPeerMain {
      *
      * Spongecaptain:不管 ZooKeeper 是集群模式（包括伪集群模式）还是单机模式，这是 ZooKeeper 服务端启动类的入口
      */
+    //入口参数用于说明配置文件的路径，比如我在集群模式下设置的 "conf/zoo1.cfg" 参数
     public static void main(String[] args) {
         System.out.println("Spongecaptain Welcome to ZooKeeper!");//自己额外缇娜及
         QuorumPeerMain main = new QuorumPeerMain();
@@ -127,7 +128,7 @@ public class QuorumPeerMain {
         //1.解析配置文件(文件 --解析为--> Java 堆内实例)
         QuorumPeerConfig config = new QuorumPeerConfig();
         if (args.length == 1) {
-            config.parse(args[0]);
+            config.parse(args[0]);//args[0] 为配置文件路径字符串
         }
 
         // Start and schedule the the purge task

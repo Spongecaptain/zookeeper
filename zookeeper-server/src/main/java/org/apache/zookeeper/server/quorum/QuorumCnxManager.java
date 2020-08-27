@@ -509,12 +509,19 @@ public class QuorumCnxManager {
         }
 
         // If lost the challenge, then drop the new connection
+        // Socket 虽然能够双向连接，但是 ZooKeeper 为了确保两个服务器之间最多存在一条有效的、用于 Leader 选举的 Socket
+        // 如果发现对方服务器的 sid 大于本级服务器 id，那么就会主动断开 Socket 连接
+        // 换言之，最终只有 sid 较大方，主动发起的 Socket 连接最终才会被持久化，否则很快就会被关闭
+        // 关于此，很容易带来疑惑：为什么两个服务器之间 Socket 可以建立两个？Socket 作为一个四元组不会重复吗？
+        // 事实上不会重复，这是因为只有 ServerSocket 才会绑定（监听）端口，而 new Socket(host,port); 操作并不会占用 ServerSocket 的端口
+        // 而是会被操作系统随机分配一个不冲突的端口，因此最终两台主机之间可以建立多个个 Socket 连接
         if (sid > self.getId()) {
             LOG.info("Have smaller server identifier, so dropping the connection: (myId:{} --> sid:{})", self.getId(), sid);
             closeSocket(sock);
             // Otherwise proceed with the connection
         } else {
             LOG.debug("Have larger server identifier, so keeping the connection: (myId:{} --> sid:{})", self.getId(), sid);
+            //这里表示 Socket 连接已经建立成功，然后开始初始化 SendWorker 与 RecvWorker 并启动
             SendWorker sw = new SendWorker(sock, sid);
             RecvWorker rw = new RecvWorker(sock, din, sid, sw);
             sw.setRecv(rw);
@@ -789,7 +796,7 @@ public class QuorumCnxManager {
     public void connectAll() {
         long sid;
         for (Enumeration<Long> en = queueSendMap.keys(); en.hasMoreElements(); ) {
-            sid = en.nextElement();
+            sid = en.nextElement();// sid 为服务器 id 的语义
             connectOne(sid);
         }
     }

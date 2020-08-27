@@ -839,7 +839,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     }
 
-    private ServerState state = ServerState.LOOKING;
+    private ServerState state = ServerState.LOOKING;//主机在初始化时，状态为 LOOKING 状态
 
     private AtomicReference<ZabState> zabState = new AtomicReference<>(ZabState.ELECTION);
     private AtomicReference<SyncMode> syncMode = new AtomicReference<>(SyncMode.NONE);
@@ -1077,7 +1077,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         }
         //1. loadDataBase() 方法用于将内存的快照 snapshot 文件以及 transaction log 反序列化到内存中
         loadDataBase();
-        //2. 启动监听客户端连接的 Socket 线程（ZAB 协议中，不仅仅只有 Leader 节点能够处理请求）
+        //2. 启动监听客户端连接的 Socket 线程（ZAB 协议中，不仅仅只有 Leader 节点能够处理请求）,其默认实现为 Jdk NIO，可选的实现为 Netty NIO
         startServerCnxnFactory();
         try {
             adminServer.start();
@@ -1279,6 +1279,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         Election le = null;
 
         //TODO: use a factory rather than a switch
+        //这里用于选择一种领导者选举算法，之所以写成这样是在历史版本中 ZooKeeper 支持过多种领导者选举算法：
+        //LeaderElection、AuthFastLeaderElection，不过较新的 ZooKeeper 中将它们都废弃了
+        //因此，在较新的 ZooKeeper 版本中，这个方法的入口参数值只能为 3
         switch (electionAlgorithm) {
         case 1:
             throw new UnsupportedOperationException("Election Algorithm 1 is not supported.");
@@ -1374,13 +1377,16 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         try {
             /*
              * Main loop
+             * 这是 ZooKeeper 最核心的主循环线程模型
              */
             while (running) {
+                //得到（集群中）本机服务器的状态
                 switch (getPeerState()) {
+                //处于 LOOKING 状态说明当前服务器并不知道哪一台服务器为 Leader（比如刚初始化、Leader 服务器发生了宕机）
                 case LOOKING:
                     LOG.info("LOOKING");
                     ServerMetrics.getMetrics().LOOKING_COUNT.add(1);
-
+                    //不关心只读服务器
                     if (Boolean.getBoolean("readonlymode.enabled")) {
                         LOG.info("Attempting to start ReadOnlyZooKeeperServer");
 
@@ -1393,6 +1399,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         // Thread is used here because otherwise it would require
                         // changes in each of election strategy classes which is
                         // unnecessary code coupling.
+                        // 这里会启动一个异步线程来完成领导者选举
                         Thread roZkMgr = new Thread() {
                             public void run() {
                                 try {
@@ -1415,6 +1422,8 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                                 shuttingDownLE = false;
                                 startLeaderElection();
                             }
+                            //makeLEStrategy().lookForLeader() 用于开始进行领导者选举策略的设置，返回结果为当前的 Leader 节点的选择
+                            //setCurrentVote() 用于设置（保存）以下当前集群的 Leader 节点是哪一个节点
                             setCurrentVote(makeLEStrategy().lookForLeader());
                         } catch (Exception e) {
                             LOG.warn("Unexpected exception", e);
@@ -1439,9 +1448,11 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         }
                     }
                     break;
+                //状态 OBSERVING 说明当前节点处于观察者模式
                 case OBSERVING:
                     try {
                         LOG.info("OBSERVING");
+                        //Observer 用到两个 CommitProcessor、SyncRequestProcessor
                         setObserver(makeObserver(logFactory));
                         observer.observeLeader();
                     } catch (Exception e) {
@@ -1458,6 +1469,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         }
                     }
                     break;
+                //FOLLOWING 状态对应于 FOLLOWER 节点
                 case FOLLOWING:
                     try {
                         LOG.info("FOLLOWING");
@@ -1471,6 +1483,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         updateServerState();
                     }
                     break;
+                //LEADING 状态对应于 Leader 节点
                 case LEADING:
                     LOG.info("LEADING");
                     try {

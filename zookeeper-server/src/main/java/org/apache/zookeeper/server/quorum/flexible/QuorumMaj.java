@@ -134,6 +134,8 @@ public class QuorumMaj implements QuorumVerifier {
      * from votingMembers
      */
     public boolean containsQuorum(Set<Long> ackSet) {
+        //判断 set 的容量大小是否大于一半数量的节点
+        //这个 half 的计算方式是：仅仅考虑 Leader + Follower 节点的半数，但不将 Observer 节点纳入统计范畴
         return (ackSet.size() > half);
     }
 
