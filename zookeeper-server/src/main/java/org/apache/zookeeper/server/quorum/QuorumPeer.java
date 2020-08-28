@@ -1085,7 +1085,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             LOG.warn("Problem starting AdminServer", e);
             System.out.println(e);
         }
-        //3. 开始选举线程(用于选举 Leader 服务器)
+        //3. 初始化用于选举 Leader 服务器的 QuorumCnxManager 实例（代表传输层），然后建立应用层与传输层之间的关系
         startLeaderElection();
         //4. 启动监听 JVM 性能的线程
         startJvmPauseMonitor();
@@ -1154,6 +1154,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         responder.running = false;
         responder.interrupt();
     }
+    //开始选举 Leader 的准备工作
     public synchronized void startLeaderElection() {
         try {
             if (getPeerState() == ServerState.LOOKING) {
@@ -1165,7 +1166,14 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             throw re;
         }
 
-        this.electionAlg = createElectionAlgorithm(electionType);
+        /**
+         *  QuorumPeer 的 electionAlg 字段通过 setElectionType 方法来进行配置
+         *  setElectionType 通过配置实例 QuorumPeerConfig 中来读取
+         *  因此，事实上我们可以通过配置文件来规定 electionAlg 的值，不过，合法的参数仅能是 3（默认就是为 3）
+         *  实际上，除非显式配置为 3，否则不要进行配置
+         */
+
+        this.electionAlg = createElectionAlgorithm(electionType);//选择一个 Leader 选举算法
     }
 
     private void startJvmPauseMonitor() {
@@ -1274,6 +1282,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         return new Observer(this, new ObserverZooKeeperServer(logFactory, this, this.zkDb));
     }
 
+    //选择一个 Leader 选举算法
     @SuppressWarnings("deprecation")
     protected Election createElectionAlgorithm(int electionAlgorithm) {
         Election le = null;
@@ -1288,13 +1297,14 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         case 2:
             throw new UnsupportedOperationException("Election Algorithm 2 is not supported.");
         case 3:
-            QuorumCnxManager qcm = createCnxnManager();
+            // 初始化各台服务器之间的底层 Leader 选举过程中的网络通信
+            QuorumCnxManager qcm = createCnxnManager();//如果把 Leader 选举作为应用层的一个应用实现，那么 QuorumCnxManager 就是应用层的下层传输层
             QuorumCnxManager oldQcm = qcmRef.getAndSet(qcm);
             if (oldQcm != null) {
                 LOG.warn("Clobbering already-set QuorumCnxManager (restarting leader election?)");
                 oldQcm.halt();
             }
-            QuorumCnxManager.Listener listener = qcm.listener;
+            QuorumCnxManager.Listener listener = qcm.listener;//Listener 显然是基于监听模式的回调逻辑封装实例
             if (listener != null) {
                 listener.start();
                 FastLeaderElection fle = new FastLeaderElection(this, qcm);

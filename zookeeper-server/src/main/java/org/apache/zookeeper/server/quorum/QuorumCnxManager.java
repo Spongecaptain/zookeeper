@@ -155,15 +155,23 @@ public class QuorumCnxManager {
 
     /*
      * Mapping from Peer to Thread number
+     * 当前主机会利用 QuorumCnxManager 来维护与管理 Leader 选举的传输层，为此，其为每一个其他主机分配了：
+     * 1. 异步工作线程，用于收发消息
+     * 2. 用于发送消息的异步消息队列
+     * 3. 用于存储刚发送去的消息
+     * 与此同时，因为我们当前主机需要和多个其他多台主机进行 Leader 选举的通信，因此使用了 HashMap 用于映射，将服务器 sid（myid） 映射为队列
+     *
      */
-    final ConcurrentHashMap<Long, SendWorker> senderWorkerMap;
-    final ConcurrentHashMap<Long, BlockingQueue<ByteBuffer>> queueSendMap;
-    final ConcurrentHashMap<Long, ByteBuffer> lastMessageSent;
+    final ConcurrentHashMap<Long, SendWorker> senderWorkerMap;// 每台服务器对应的 SendWorker(Worker 为一个异步线程)
+    final ConcurrentHashMap<Long, BlockingQueue<ByteBuffer>> queueSendMap;// 需要发送给各个服务器的消息队列
+    final ConcurrentHashMap<Long, ByteBuffer> lastMessageSent;// 发送给每台服务器最近的消息
+
+
 
     /*
      * Reception queue
      */
-    public final BlockingQueue<Message> recvQueue;
+    public final BlockingQueue<Message> recvQueue;// 本台服务器接收到的消息
 
     /*
      * Shutdown flag
@@ -903,6 +911,7 @@ public class QuorumCnxManager {
 
     /**
      * Thread to listen on some ports
+     * Listener 类是一个线程类，其用于监听参与选举的所有其他节点的 Socket 消息
      */
     public class Listener extends ZooKeeperThread {
 
@@ -1016,12 +1025,13 @@ public class QuorumCnxManager {
         }
 
         class ListenerHandler implements Runnable, Closeable {
+            //可以见得，ZooKeeper 对于来自客户端的请求，采用 NIO 的方式来处理，对于 Leader 选举（因为线程数量有限），因此使用 OIO 的方式来处理
             private ServerSocket serverSocket;
             private InetSocketAddress address;
             private boolean portUnification;
             private boolean sslQuorum;
             private CountDownLatch latch;
-
+            //指的一提的是，只有应用层需要进行 leader 选举时，回会需要这个在传输层建立的类。
             ListenerHandler(InetSocketAddress address, boolean portUnification, boolean sslQuorum,
                             CountDownLatch latch) {
                 this.address = address;
