@@ -52,6 +52,7 @@ import org.slf4j.LoggerFactory;
 /**
  * The command line client to ZooKeeper.
  *
+ * 这是 ZooKeeper 客户端的入口类，可以直接去看 Main 方法
  */
 @InterfaceAudience.Public
 public class ZooKeeperMain {
