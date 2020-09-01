@@ -972,7 +972,7 @@ public class ClientCnxn {
 
                 LOG.debug("Reading reply session id: 0x{}, packet:: {}", Long.toHexString(sessionId), packet);
             } finally {
-                //这里最主要的逻辑便是唤醒等待 Package 的 ZooKeeper 客户端线程
+                //这里最主要的逻辑便是唤醒等待 Package 的 ZooKeeper 客户端线程¡
                 finishPacket(packet);
             }
         }
