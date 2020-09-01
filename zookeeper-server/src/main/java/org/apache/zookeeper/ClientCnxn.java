@@ -1222,7 +1222,7 @@ public class ClientCnxn {
                         clientCnxnSocket.updateLastSendAndHeard();
                     }
 
-                    if (state.isConnected()) {//如果当前状态处于 Socket 已连接，那么进行如下的逻辑(这里)
+                    if (state.isConnected()) {//如果当前状态处于 Socket 已连接，那么进行如下的逻辑(这里主要用于权限检查，不是重点)
                         // determine whether we need to send an AuthFailed event.
                         if (zooKeeperSaslClient != null) {
                             boolean sendAuthEvent = false;
@@ -1277,6 +1277,7 @@ public class ClientCnxn {
                                              - clientCnxnSocket.getIdleSend()
                                              - ((clientCnxnSocket.getIdleSend() > 1000) ? 1000 : 0);
                         //send a ping request either time is due or no packet sent out within MAX_SEND_PING_INTERVAL
+                        //只有在达到规定的 Ping 包发送间隔后才会发送一个 Ping 包
                         if (timeToNextPing <= 0 || clientCnxnSocket.getIdleSend() > MAX_SEND_PING_INTERVAL) {
                             sendPing();//向队列中加入一个 ping 包，相当于心跳包 注意事项：这里没有真正地发送 ping 包
                             clientCnxnSocket.updateLastSend();
