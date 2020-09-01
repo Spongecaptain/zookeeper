@@ -108,7 +108,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         if (sockKey.isWritable()) {
             //从FIFO队列中取出一个元素（第一个），但是注意，这里队列中第一个元素还没有被移除
             Packet p = findSendablePacket(outgoingQueue, sendThread.tunnelAuthInProgress());
-
+            //如果 p 为 null，说明队列中没有有效的待发送的 Package，即使 Channel 允许写数据，但是没有数据可写，那么就什么都不要做
             if (p != null) {
                 updateLastSend();
                 // If we already started writing p, p.bb will already exist
