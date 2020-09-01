@@ -269,6 +269,7 @@ public class ZooKeeperMain {
 
     public static void main(String[] args) throws IOException, InterruptedException {
         ZooKeeperMain main = new ZooKeeperMain(args);
+        //main 方法对一个一个线程，这里的 run() 方法并非继承于 Thread.run()，之所以这样调用是为了突出这是一个(main)线程
         main.run();
     }
 
