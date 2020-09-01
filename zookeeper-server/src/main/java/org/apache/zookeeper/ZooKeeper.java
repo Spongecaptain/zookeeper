@@ -639,8 +639,15 @@ public class ZooKeeper implements AutoCloseable {
 
         this.clientConfig = clientConfig != null ? clientConfig : new ZKClientConfig();
         this.hostProvider = hostProvider;
+        // 对 main 方法的入口参数的 host:port 对进行包装
         ConnectStringParser connectStringParser = new ConnectStringParser(connectString);
-
+        /**
+         * 这里的的逻辑主要分为两步：
+         * 1. 调用  getClientCnxnSocket() 方法
+         * 2. 调用 ClientCnxn 的构造方法
+         * 3. 调用 ClientCnxn 实例的 start() 方法
+         * 我们这里应该按照先后顺序来看
+         */
         cnxn = createConnection(
             connectStringParser.getChrootPath(),
             hostProvider,
@@ -728,6 +735,7 @@ public class ZooKeeper implements AutoCloseable {
         int sessionTimeout,
         Watcher watcher,
         boolean canBeReadOnly) throws IOException {
+        //这里 createDefaultHostProvider(connectString) 方法会创建一个 StaticHostProvider 实例，用于处理 host:port 对
         this(connectString, sessionTimeout, watcher, canBeReadOnly, createDefaultHostProvider(connectString));
     }
 
@@ -1325,24 +1333,43 @@ public class ZooKeeper implements AutoCloseable {
         List<ACL> acl,
         CreateMode createMode) throws KeeperException, InterruptedException {
         final String clientPath = path;
+        //用于验证待创建 ZNode 路径的合法性
         PathUtils.validatePath(clientPath, createMode.isSequential());
         EphemeralType.validateTTL(createMode, -1);
+        //用于权限验证检查
         validateACL(acl);
-
+        //这是因为 ZooKeeper 可以有默认的操作目录（相对于某一路径工作），这里需要将客户端的相对目录转换为服务端的绝对目录
+        //但这不意味着 ZooKeeper 支持相对路径，因此客户端只能基于某一路径作为根路径，启动后无法更改
         final String serverPath = prependChroot(clientPath);
-
-        RequestHeader h = new RequestHeader();
+        RequestHeader h = new RequestHeader();//请求头
         h.setType(createMode.isContainer() ? ZooDefs.OpCode.createContainer : ZooDefs.OpCode.create);
-        CreateRequest request = new CreateRequest();
-        CreateResponse response = new CreateResponse();
-        request.setData(data);
-        request.setFlags(createMode.toFlag());
-        request.setPath(serverPath);
-        request.setAcl(acl);
+        CreateRequest request = new CreateRequest();//请求体
+        CreateResponse response = new CreateResponse();//请求响应
+        request.setData(data);//请求数据
+        request.setFlags(createMode.toFlag());//请求的创建模式
+        request.setPath(serverPath);//请求路径（服务器端的绝对路径）
+        request.setAcl(acl);//权限控制
+        /**
+         * 向异步队列提交一个请求任务，返回一个响应头
+         * 可见提交请求就是分为两步：
+         * - 将请求封装为一个 Package 实例
+         * - 将 Package 实例放入队列中
+         * - 客户端同步阻塞 Package 的响应
+         * 同步阻塞的方式非常简单，如下代码所示：
+         *  while (!packet.finished) {
+         *      packet.wait();
+         *  }
+         *  可见，我们命令行线程作为队列的生产者，另一方面，消费者线程在发送 Package
+         *  ，然后进行发送、接收到响应以后，会通过 package.notify() 来唤醒客户端生产者线程
+         */
+
+
         ReplyHeader r = cnxn.submitRequest(h, request, response, null);
+        //如果得到 Socket 对消息的发送有发生错误，那么抛出异常
         if (r.getErr() != 0) {
             throw KeeperException.create(KeeperException.Code.get(r.getErr()), clientPath);
         }
+        //如果没有错误信息，那么返回 response 中的路径（chrootPath 就是是否更改 Client 处的根路径的标志位）
         if (cnxn.chrootPath == null) {
             return response.getPath();
         } else {
@@ -3022,10 +3049,14 @@ public class ZooKeeper implements AutoCloseable {
     }
 
     private ClientCnxnSocket getClientCnxnSocket() throws IOException {
+        //1. 取出系统属性名 zookeeper.clientCnxnSocket 对应的值（如果配置，那么应当是一个合法的类名）
         String clientCnxnSocketName = getClientConfig().getProperty(ZKClientConfig.ZOOKEEPER_CLIENT_CNXN_SOCKET);
+        //2. 如果上述系统属性没有配置，那么就取 org.apache.zookeeper.ClientCnxnSocketNIO
         if (clientCnxnSocketName == null) {
             clientCnxnSocketName = ClientCnxnSocketNIO.class.getName();
         }
+        //3. 下面则是利用配置信息 clientCnxnSocketName 对应的类型，通过反射构造一个 ClientCnxnSocket 实例
+        //可以见得，在默认情况下，ClientCnxnSocket 的类型为 ClientCnxnSocketNIO
         try {
             Constructor<?> clientCxnConstructor = Class.forName(clientCnxnSocketName)
                                                        .getDeclaredConstructor(ZKClientConfig.class);

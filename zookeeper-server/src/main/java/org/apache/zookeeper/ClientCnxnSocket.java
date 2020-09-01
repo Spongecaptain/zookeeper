@@ -85,11 +85,11 @@ abstract class ClientCnxnSocket {
     void updateNow() {
         now = Time.currentElapsedTime();
     }
-
+    //距离上一次读取数据的时间间隔
     int getIdleRecv() {
         return (int) (now - lastHeard);
     }
-
+    //距离上一次发送数据的时间
     int getIdleSend() {
         return (int) (now - lastSend);
     }
@@ -151,6 +151,7 @@ abstract class ClientCnxnSocket {
         }
 
         this.sessionId = conRsp.getSessionId();
+        //这主要是在客户端连接成功后触发一个事件
         sendThread.onConnected(conRsp.getTimeOut(), this.sessionId, conRsp.getPasswd(), isRO);
     }
 

@@ -69,6 +69,7 @@ public class CreateCommand extends CliCommand {
 
     @Override
     public boolean exec() throws CliException {
+        //这些是标志位，用于标识命令行是否含有某一个具体的参数
         boolean hasE = cl.hasOption("e");
         boolean hasS = cl.hasOption("s");
         boolean hasC = cl.hasOption("c");
@@ -89,7 +90,7 @@ public class CreateCommand extends CliCommand {
         if (hasT && hasC) {
             throw new MalformedCommandException("TTLs cannot be used with Container znodes");
         }
-
+        //这里的 flag 即 ZNode 的创建模式，其通过上面的标志为来控制
         CreateMode flags;
         if (hasE && hasS) {
             flags = CreateMode.EPHEMERAL_SEQUENTIAL;
@@ -110,20 +111,24 @@ public class CreateCommand extends CliCommand {
             }
         }
 
-        String path = args[1];
+        String path = args[1];//得到待创建的 Znode 节点的路径
         byte[] data = null;
         if (args.length > 2) {
             data = args[2].getBytes();
         }
         List<ACL> acl = ZooDefs.Ids.OPEN_ACL_UNSAFE;
+        //进行 ACL 参数的检查
         if (args.length > 3) {
             acl = AclParser.parse(args[3]);
         }
+        //即使是命令行，最终也是通过 ZooKeeper 类 create() 方法来完成节点的创建，
+        //这一点与我们直接在 Java 代码中利用 ZooKeeper 类来完成节点创建没有本质的区别
+        //区别仅仅在于命令行多了一个窗口，因此涉及到了命令解析、检查等操作
         try {
             String newPath = hasT
                 ? zk.create(path, data, acl, flags, new Stat(), ttl)
-                : zk.create(path, data, acl, flags);
-            err.println("Created " + newPath);
+                : zk.create(path, data, acl, flags);//我们这里就看看没有 ttl 来创建节点的版本
+            err.println("Created " + newPath);//如果没有抛出异常，那么在命令行打印出节点创建成功的指令
         } catch (IllegalArgumentException ex) {
             throw new MalformedPathException(ex.getMessage());
         } catch (KeeperException.EphemeralOnLocalSessionException e) {

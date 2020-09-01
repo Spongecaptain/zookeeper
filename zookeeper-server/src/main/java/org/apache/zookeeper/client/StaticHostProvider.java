@@ -130,6 +130,7 @@ public final class StaticHostProvider implements HostProvider {
         if (serverAddresses.isEmpty()) {
             throw new IllegalArgumentException("A HostProvider may not be empty!");
         }
+        //这里 shuffle(serverAddresses) 方法负责将原本按照入口参数解析的多对 host:port 解析后的 list 的元素乱序
         this.serverAddresses = shuffle(serverAddresses);
         currentIndex = -1;
         lastIndex = -1;
@@ -149,7 +150,7 @@ public final class StaticHostProvider implements HostProvider {
             return address;
         }
     }
-
+    //值得一提的是：Collections.shuffle）方法每次执行后的乱序是没有规律的。
     private List<InetSocketAddress> shuffle(Collection<InetSocketAddress> serverAddresses) {
         List<InetSocketAddress> tmpList = new ArrayList<>(serverAddresses.size());
         tmpList.addAll(serverAddresses);

@@ -52,7 +52,7 @@ import org.slf4j.LoggerFactory;
 /**
  * The command line client to ZooKeeper.
  *
- * 这是 ZooKeeper 客户端的入口类，可以直接去看 Main 方法
+ * 这是 ZooKeeper 客户端的入口类，可以直接去看 main 方法
  */
 @InterfaceAudience.Public
 public class ZooKeeperMain {
@@ -230,7 +230,7 @@ public class ZooKeeperMain {
         Collections.sort(cmdList);
         return cmdList;
     }
-
+    //此方法的返回值，例如："[zk: localhost:2181,localhost:2182,localhost:2183(CONNECTED) 0]"
     protected String getPrompt() {
         return "[zk: " + host + "(" + zk.getState() + ")" + " " + commandCount + "] ";
     }
@@ -240,12 +240,13 @@ public class ZooKeeperMain {
     }
 
     protected void connectToZK(String newHost) throws InterruptedException, IOException {
+        //如果当前 ZooKeeper 实例还在运行，那么就进行关闭
         if (zk != null && zk.getState().isAlive()) {
             zk.close();
         }
-
+        //下面是一些配置信息的解析与读取
         host = newHost;
-        boolean readOnly = cl.getOption("readonly") != null;
+        boolean readOnly = cl.getOption("readonly") != null;//ZeeKeeper 客户端的只读模式
         if (cl.getOption("secure") != null) {
             System.setProperty(ZKClientConfig.SECURE_CLIENT, "true");
             System.out.println("Secure connection is enabled");
@@ -261,7 +262,8 @@ public class ZooKeeperMain {
                 ServiceUtils.requestSystemExit(ExitCode.INVALID_INVOCATION.getValue());
             }
         }
-
+        //ZooKeeperAdmin extends ZooKeeper，较早的 ZooKeeper 版本直接是构造一个 ZooKeeper 实例
+        //子类构造过程中或显式或隐式地调用父类构造器，因此我们还是要从 ZooKeeper 类的构造器入手，来进行分析
         zk = new ZooKeeperAdmin(host, Integer.parseInt(cl.getOption("timeout")), new MyWatcher(), readOnly, clientConfig);
     }
 
@@ -271,7 +273,7 @@ public class ZooKeeperMain {
     }
 
     public ZooKeeperMain(String[] args) throws IOException, InterruptedException {
-        cl.parseOptions(args);
+        cl.parseOptions(args);//解析入口参数
         System.out.println("Connecting to " + cl.getOption("server"));
         connectToZK(cl.getOption("server"));
     }
@@ -281,12 +283,20 @@ public class ZooKeeperMain {
     }
 
     void run() throws IOException, InterruptedException {
+
         if (cl.getCommand() == null) {
+            System.out.println("Hello Spongecaptain!");
             System.out.println("Welcome to ZooKeeper!");
 
             boolean jlinemissing = false;
             // only use jline if it's in the classpath
             try {
+                /**
+                 * JLine 是一个用来处理控制台(命令行)输入的 Java 类库，但并不是以纯 Java 语言编写，而是部分基于操作系统平台
+                 * JLine 并不是我们学习的重点，我们完全可以将其考虑为一个命令行命令接收工具
+                 * 知道 JLine 的在 ZooKeeper Client 的入口为 executeLine(line); 方法即可
+                 */
+
                 Class<?> consoleC = Class.forName("jline.console.ConsoleReader");
                 Class<?> completorC = Class.forName("org.apache.zookeeper.JLineZNodeCompleter");
 
@@ -300,8 +310,9 @@ public class ZooKeeperMain {
 
                 String line;
                 Method readLine = consoleC.getMethod("readLine", String.class);
+                //下面循环中的 getPrompt() 方法主要用于显示命令行前缀，例如："[zk: localhost:2181,localhost:2182,localhost:2183(CONNECTED) 0]"
                 while ((line = (String) readLine.invoke(console, getPrompt())) != null) {
-                    executeLine(line);
+                    executeLine(line);//这里 ZooKeeper 命令行工具接收到一条命令，例如 "ls /"
                 }
             } catch (ClassNotFoundException
                 | NoSuchMethodException
@@ -330,10 +341,10 @@ public class ZooKeeperMain {
     }
 
     public void executeLine(String line) throws InterruptedException, IOException {
-        if (!line.equals("")) {
+        if (!line.equals("")) {//要求命令行非空，不能是单纯的空格或者回车
             cl.parseCommand(line);
-            addToHistory(commandCount, line);
-            processCmd(cl);
+            addToHistory(commandCount, line);//将执行过的命令记录下来，这使得我们能够在命令行中输入 history 命令得到命令的执行记录
+            processCmd(cl);//处理命令（重点）
             commandCount++;
         }
     }
@@ -341,6 +352,7 @@ public class ZooKeeperMain {
     protected boolean processCmd(MyCommandOptions co) throws IOException, InterruptedException {
         boolean watch = false;
         try {
+            //processZKCmd(MyCommandOptions co)方法的返回值主要用于测试，这里我们可以专注其处理逻辑
             watch = processZKCmd(co);
             exitCode = ExitCode.EXECUTION_FINISHED.getValue();
         } catch (CliException ex) {
@@ -350,23 +362,34 @@ public class ZooKeeperMain {
         return watch;
     }
 
+    /**
+     * @param co co 存储了命令行的各个选项，例如我们输入的是 "ls /" 命令，那么其内存存储了两个选项："ls"、"/"，
+     *           还包括其他隐式参数，例如服务器列表、超时时间等参数
+     * @return
+     * @throws CliException
+     * @throws IOException
+     * @throws InterruptedException
+     */
     protected boolean processZKCmd(MyCommandOptions co) throws CliException, IOException, InterruptedException {
+        //这个 args 字符串数组即为输入的完整命令的各个元素，例如 create /foobar hello -e，将会被按照空格
+        //依次拆分为 "create"、"/foobar"、"hello"、"-e" 字符串数组
         String[] args = co.getArgArray();
+        //cmd 单纯指的是命令，例如 "get /cmd" 对应的 cmd 为 get，"set /foo 123" 对应的 cmd 为 set
         String cmd = co.getCommand();
         if (args.length < 1) {
             usage();
             throw new MalformedCommandException("No command entered");
         }
-
+        //检查输入的 cmd 命令是否合法，否则执行 usage() 方法
         if (!commandMap.containsKey(cmd)) {
-            usage();
+            usage();//usage() 方法在命令行输入不合法时，通过 System.err.println() 打印出合法的命令（红色）
             throw new CommandNotFoundException("Command not found " + cmd);
         }
 
         boolean watch = false;
 
         LOG.debug("Processing {}", cmd);
-
+        //下面则是处理各种类型的命令行命令，包括 quit、redo、history、printwatches、
         if (cmd.equals("quit")) {
             zk.close();
             ServiceUtils.requestSystemExit(exitCode);
@@ -407,11 +430,14 @@ public class ZooKeeperMain {
             System.out.println("Not connected");
             return false;
         }
-
+        // 如果不是上述所有命令，那么就通过 commandMap 来进行执行
         // execute from commandMap
         CliCommand cliCmd = commandMapCli.get(cmd);
         if (cliCmd != null) {
             cliCmd.setZk(zk);
+            //执行命令的主要逻辑,CliCommand 抽象类有非常多的具体子类
+            //例如 create 方法对应 CreateCommand 类，而 getAcl 对应 GetAclCommand 类
+            //我们这里以 create 方法为例进行说明
             watch = cliCmd.parse(args).exec();
         } else if (!commandMap.containsKey(cmd)) {
             usage();

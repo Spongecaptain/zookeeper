@@ -30,15 +30,25 @@
       * @throws IllegalArgumentException if the path is invalid
       */
      public static void validatePath(String path, boolean isSequential) throws IllegalArgumentException {
+         /**
+          * 如果是序列化节点，那么给路径字符串末尾＋1（原路径没有更改），否则就原路径进行路径合法性检查
+          * 这是因为 ZooKeeper 非顺序节点不允许以 / 作为路径结尾，但是顺序节点允许，但是我们想统一路径检查逻辑
+          * 如果路径为 create /foo/，且为非序列化节点，因为末尾没有加 1，因此会报异常
+          * 如果路径为 create /foo/，且为序列化节点，因为末尾加 1，这里的路径相当于 /foo/1 因此不会报错，会通过路径检查逻辑
+          */
+
          validatePath(isSequential ? path + "1" : path);
      }
 
      /**
       * Validate the provided znode path string
+      * 在此方法是对 path 字符串的各种检查，这都能在 ZooKeeper 在创建节点的语法上找到对应内容
+      * 具体的执行逻辑反而不是重点
       * @param path znode path string
       * @throws IllegalArgumentException if the path is invalid
       */
      public static void validatePath(String path) throws IllegalArgumentException {
+
          if (path == null) {
              throw new IllegalArgumentException("Path cannot be null");
          }

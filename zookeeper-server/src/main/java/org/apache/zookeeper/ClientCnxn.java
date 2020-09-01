@@ -421,6 +421,7 @@ public class ClientCnxn {
         byte[] sessionPasswd,
         boolean canBeReadOnly
     ) throws IOException {
+        //1. 字段初始化
         this.chrootPath = chrootPath;
         this.hostProvider = hostProvider;
         this.sessionTimeout = sessionTimeout;
@@ -433,15 +434,18 @@ public class ClientCnxn {
                 clientConfig.getBoolean(ZKClientConfig.DISABLE_AUTO_WATCH_RESET),
                 defaultWatcher);
 
-        this.connectTimeout = sessionTimeout / hostProvider.size();
-        this.readTimeout = sessionTimeout * 2 / 3;
-
+        this.connectTimeout = sessionTimeout / hostProvider.size();//一个连接的超时时间等于 Session 超时时间除以有多少个 host
+        this.readTimeout = sessionTimeout * 2 / 3;//readTimeout 也是通过 Session Timeout 来计算的
+        //2. 初始化下面两个线程
         this.sendThread = new SendThread(clientCnxnSocket);
         this.eventThread = new EventThread();
         initRequestTimeout();
     }
 
     public void start() {
+        //可见 ClientCnxn 本身不是线程，其之所以能够暴露一个 start() 方法的原因在于其内部封装了两个线程实例
+        //start() 方法即用于启动这两个线程
+        //下面我们应当查看这两个线程实例的 run() 方法
         sendThread.start();
         eventThread.start();
     }
@@ -766,6 +770,7 @@ public class ClientCnxn {
         if (p.cb == null) {
             synchronized (p) {
                 p.finished = true;
+                //唤醒等待 Package 的 ZooKeeper 客户端线程
                 p.notifyAll();
             }
         } else {
@@ -876,15 +881,16 @@ public class ClientCnxn {
             ByteBufferInputStream bbis = new ByteBufferInputStream(incomingBuffer);
             BinaryInputArchive bbia = BinaryInputArchive.getArchive(bbis);
             ReplyHeader replyHdr = new ReplyHeader();
-
+            //将字节数据序列化为一个 ReplyHeader 实例
             replyHdr.deserialize(bbia, "header");
+            //根据 ReplyHeader 实例给的 xid 字段值来判断响应类型
             switch (replyHdr.getXid()) {
-            case PING_XID:
+            case PING_XID://ping 响应
                 LOG.debug("Got ping response for session id: 0x{} after {}ms.",
                     Long.toHexString(sessionId),
                     ((System.nanoTime() - lastPingSentNs) / 1000000));
                 return;
-              case AUTHPACKET_XID:
+              case AUTHPACKET_XID://鉴权响应
                 LOG.debug("Got auth session id: 0x{}", Long.toHexString(sessionId));
                 if (replyHdr.getErr() == KeeperException.Code.AUTHFAILED.intValue()) {
                     changeZkState(States.AUTH_FAILED);
@@ -893,7 +899,7 @@ public class ClientCnxn {
                     eventThread.queueEventOfDeath();
                 }
               return;
-            case NOTIFICATION_XID:
+            case NOTIFICATION_XID://事件通知响应
                 LOG.debug("Got notification session id: 0x{}",
                     Long.toHexString(sessionId));
                 WatcherEvent event = new WatcherEvent();
@@ -929,7 +935,10 @@ public class ClientCnxn {
                 zooKeeperSaslClient.respondToServer(request.getToken(), ClientCnxn.this);
                 return;
             }
-
+            //注意 Ping 包并不会走到这个逻辑，Ping 包的 package 也不会加入 pendingQueue 对立中
+            //由于客户端是阻塞模型，因此在这里因为不会拿到 Ping 包响应，因此拿到的一定是各种命令（例如 create）的响应
+            //另一方面，正是每一条客户端的命令都会阻塞（直到接收到上一条命令的响应后才能继续写一条的写入），因此直接从队列中
+            //因此，直接从 pendingQueue 中取出的 package 恰好对应于导致客户端阻塞的那一条命令
             Packet packet;
             synchronized (pendingQueue) {
                 if (pendingQueue.size() == 0) {
@@ -941,6 +950,7 @@ public class ClientCnxn {
              * Since requests are processed in order, we better get a response
              * to the first request!
              */
+            //将响应结果放到 Package 实例中
             try {
                 if (packet.requestHeader.getXid() != replyHdr.getXid()) {
                     packet.replyHeader.setErr(KeeperException.Code.CONNECTIONLOSS.intValue());
@@ -962,6 +972,7 @@ public class ClientCnxn {
 
                 LOG.debug("Reading reply session id: 0x{}, packet:: {}", Long.toHexString(sessionId), packet);
             } finally {
+                //这里最主要的逻辑便是唤醒等待 Package 的 ZooKeeper 客户端线程
                 finishPacket(packet);
             }
         }
@@ -1139,11 +1150,15 @@ public class ClientCnxn {
                     LOG.warn("Unexpected exception", e);
                 }
             }
+            //修改当前客户端的状态为 CONNECTING（连接中，将其封装为一个方法的原因在于为了确保状态修改时不处于关闭等状态）
             changeZkState(States.CONNECTING);
 
             String hostPort = addr.getHostString() + ":" + addr.getPort();
             MDC.put("myid", hostPort);
+            //这里的 setName() 方法为继承于 Thread 的方法，用于设置 Thread 实例内的 name 字段；
             setName(getName().replaceAll("\\(.*\\)", "(" + hostPort + ")"));
+            // 简单认证与安全层 ( SASL ) 是一个在网络协议中用来认证和数据加密的构架
+            // 这并不是 ZooKeeper 客户端启动的重点步骤，这里就不过多地展开了
             if (clientConfig.isSaslClientEnabled()) {
                 try {
                     if (zooKeeperSaslClient != null) {
@@ -1163,9 +1178,10 @@ public class ClientCnxn {
                     saslLoginFailed = true;
                 }
             }
+            //记录一条开启 Socket 连接的日志
             logStartConnect(addr);
-
-            clientCnxnSocket.connect(addr);
+            //真正开始 Socket 连接
+            clientCnxnSocket.connect(addr);//默认情况下，这个类的实例类型为 ClientCnxnSocketNIO，但是可以选择为基于 Netty 实现的 ClientCnxnSocketNetty
         }
 
         private void logStartConnect(InetSocketAddress addr) {
@@ -1184,9 +1200,10 @@ public class ClientCnxn {
             long lastPingRwServer = Time.currentElapsedTime();
             final int MAX_SEND_PING_INTERVAL = 10000; //10 seconds
             InetSocketAddress serverAddress = null;
+            //连接是否存活的标准是：当前 ZooKeeper 实例既没有被关闭，又没有验证失败
             while (state.isAlive()) {
                 try {
-                    if (!clientCnxnSocket.isConnected()) {
+                    if (!clientCnxnSocket.isConnected()) {//如果此时 Socket 的连接还没有建立，那么就会启动如下的逻辑开始建立连接
                         // don't re-establish connection if we are closing
                         if (closing) {
                             break;
@@ -1195,14 +1212,17 @@ public class ClientCnxn {
                             serverAddress = rwServerAddress;
                             rwServerAddress = null;
                         } else {
+                            //可见 HostProvider 类的作用就是以轮询遍历地方式提供 host
                             serverAddress = hostProvider.next(1000);
                         }
-                        onConnecting(serverAddress);
+                        onConnecting(serverAddress);//这个方法仅仅用于测试使用
+                        //开始 Socket 连接（NIO）
                         startConnect(serverAddress);
+                        //
                         clientCnxnSocket.updateLastSendAndHeard();
                     }
 
-                    if (state.isConnected()) {
+                    if (state.isConnected()) {//如果当前状态处于 Socket 已连接，那么进行如下的逻辑(这里)
                         // determine whether we need to send an AuthFailed event.
                         if (zooKeeperSaslClient != null) {
                             boolean sendAuthEvent = false;
@@ -1235,17 +1255,19 @@ public class ClientCnxn {
                                 }
                             }
                         }
+                        //to 在连接已经建立的情况下用于统计读取数据的时间，其中被减数为规定值，减数为实际使用值
                         to = readTimeout - clientCnxnSocket.getIdleRecv();
-                    } else {
+                    } else {//to 在连接未建立状态用于连接是否超时的统计
                         to = connectTimeout - clientCnxnSocket.getIdleRecv();
                     }
 
-                    if (to <= 0) {
+                    if (to <= 0) {//说明超时了
                         String warnInfo = String.format(
                             "Client session timed out, have not heard from server in %dms for session id 0x%s",
                             clientCnxnSocket.getIdleRecv(),
                             Long.toHexString(sessionId));
                         LOG.warn(warnInfo);
+                        //这里的抛出的异常会被 while 循环内的最外层 try 捕获
                         throw new SessionTimeoutException(warnInfo);
                     }
                     if (state.isConnected()) {
@@ -1256,7 +1278,7 @@ public class ClientCnxn {
                                              - ((clientCnxnSocket.getIdleSend() > 1000) ? 1000 : 0);
                         //send a ping request either time is due or no packet sent out within MAX_SEND_PING_INTERVAL
                         if (timeToNextPing <= 0 || clientCnxnSocket.getIdleSend() > MAX_SEND_PING_INTERVAL) {
-                            sendPing();
+                            sendPing();//向队列中加入一个 ping 包，相当于心跳包 注意事项：这里没有真正地发送 ping 包
                             clientCnxnSocket.updateLastSend();
                         } else {
                             if (timeToNextPing < to) {
@@ -1264,7 +1286,7 @@ public class ClientCnxn {
                             }
                         }
                     }
-
+                    // 如果客户端处于只读模式，那么进行如下的逻辑
                     // If we are in read-only mode, seek for read/write server
                     if (state == States.CONNECTEDREADONLY) {
                         long now = Time.currentElapsedTime();
@@ -1277,7 +1299,8 @@ public class ClientCnxn {
                         }
                         to = Math.min(to, pingRwTimeout - idlePingRwServer);
                     }
-
+                    //进行真正队列的消费，进行 package 的传输（包括客户端命令对应的 package 以及 ping 包）
+                    //因为 NIO 网络传输逻辑有多个实现类，这类以基于 JDK NIO 逻辑的 ClientCnxnSocketNIO 进行说明
                     clientCnxnSocket.doTransport(to, pendingQueue, ClientCnxn.this);
                 } catch (Throwable e) {
                     if (closing) {
@@ -1533,7 +1556,7 @@ public class ClientCnxn {
     protected int xid = 1;
 
     // @VisibleForTesting
-    volatile States state = States.NOT_CONNECTED;
+    volatile States state = States.NOT_CONNECTED;//初始状态下处于未连接状态
 
     /*
      * getXid() is called externally by ClientCnxnNIO::doIO() when packets are sent from the outgoingQueue to
@@ -1564,6 +1587,7 @@ public class ClientCnxn {
         WatchRegistration watchRegistration,
         WatchDeregistration watchDeregistration) throws InterruptedException {
         ReplyHeader r = new ReplyHeader();
+        //这里 queuePacket() 方法是一个关键要点
         Packet packet = queuePacket(
             h,
             r,
@@ -1576,6 +1600,7 @@ public class ClientCnxn {
             watchRegistration,
             watchDeregistration);
         synchronized (packet) {
+            //这里有两种模式，一种是有超时等待时间的 Socket 发送 packet，当 requestTimeout 小于等于零时，没有超时时间
             if (requestTimeout > 0) {
                 // Wait for request completion with timeout
                 waitForPacketFinish(r, packet);
@@ -1656,6 +1681,7 @@ public class ClientCnxn {
         // Note that we do not generate the Xid for the packet yet. It is
         // generated later at send-time, by an implementation of ClientCnxnSocket::doIO(),
         // where the packet is actually sent.
+        // 将请求头、返回头、请求内容、返回内容、watch 注册等实例封装为一个 Packet 实例
         packet = new Packet(h, r, request, response, watchRegistration);
         packet.cb = cb;
         packet.ctx = ctx;
@@ -1675,9 +1701,16 @@ public class ClientCnxn {
                 if (h.getType() == OpCode.closeSession) {
                     closing = true;
                 }
+                //将封装完毕的 Packet 添加到队列中
                 outgoingQueue.add(packet);
             }
         }
+        /**
+         * 如果是 JDK NIO，那么此方法会负责调用 Selector.wakeup() 方法
+         * NIO中的Selector封装了底层的系统调用，其中 Selector.wakeup() 用于唤醒阻塞在select方法上的线程
+         */
+
+
         sendThread.getClientCnxnSocket().packetAdded();
         return packet;
     }
