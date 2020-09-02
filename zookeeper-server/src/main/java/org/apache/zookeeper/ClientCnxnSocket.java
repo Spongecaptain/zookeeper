@@ -62,9 +62,12 @@ abstract class ClientCnxnSocket {
     protected ByteBuffer incomingBuffer = lenBuffer;
     protected final AtomicLong sentCount = new AtomicLong(0L);
     protected final AtomicLong recvCount = new AtomicLong(0L);
-    protected long lastHeard;
-    protected long lastSend;
-    protected long now;
+    /**
+     * lastHeard、lastSend、now 字段主要用于超时逻辑
+     */
+    protected long lastHeard;//在读取了响应，包括上面提到的 connect 型请求和常规命令型请求的响应以及完成网络连接时更新为当前时间
+    protected long lastSend;//每次发送完 ping 命令和请求以及完成网络连接时更新为当前时间
+    protected long now;//每次轮询 select 之前更新，或者发生错误是在 catch 段中更新为当前时间
     protected ClientCnxn.SendThread sendThread;
     protected LinkedBlockingDeque<Packet> outgoingQueue;
     protected ZKClientConfig clientConfig;

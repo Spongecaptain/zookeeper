@@ -74,6 +74,7 @@ public class WatchedEvent {
     /**
      *  Convert WatchedEvent to type that can be sent over network
      */
+    // WatchedEvent.getWrapper() 方法用于将 WatcherEvent 转换为 WatcherEvent 实例
     public WatcherEvent getWrapper() {
         return new WatcherEvent(eventType.getIntValue(), keeperState.getIntValue(), path);
     }

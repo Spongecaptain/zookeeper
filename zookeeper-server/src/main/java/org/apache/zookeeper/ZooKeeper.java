@@ -2029,23 +2029,29 @@ public class ZooKeeper implements AutoCloseable {
      *
      * @see #getData(String, Watcher, Stat)
      */
+    //以这个方法为例说明客户端进行 Watcher 注册的过程
     public void getData(final String path, Watcher watcher, DataCallback cb, Object ctx) {
+
         final String clientPath = path;
-        PathUtils.validatePath(clientPath);
+        PathUtils.validatePath(clientPath);//用于检查路径的有效性
 
         // the watch contains the un-chroot path
+        // WatchRegistration 实例为 Watch 的注册信息实例，用于暂时保存数据节点路径与 Watcher 的对应关系
         WatchRegistration wcb = null;
         if (watcher != null) {
-            wcb = new DataWatchRegistration(watcher, clientPath);
+            wcb = new DataWatchRegistration(watcher, clientPath);//这里 WatchRegistration 的实际类型为 DataWatchRegistration
         }
 
-        final String serverPath = prependChroot(clientPath);
-
+        final String serverPath = prependChroot(clientPath);//将 clientPath 转换为 serverPath
+        //初始化请求头实例（这里与 Watcher 的关系不大）
         RequestHeader h = new RequestHeader();
         h.setType(ZooDefs.OpCode.getData);
+        //初始化请求体实例
         GetDataRequest request = new GetDataRequest();
         request.setPath(serverPath);
-        request.setWatch(watcher != null);
+        //这里是重点：Request 并不需要知道具体 Watcher 实例的引用，而是仅仅需要知道是否有 Watcher 的设置
+        //具体的 watch 引用在客户端中保存，通过 WatchRegistration 实例可以完成从 path 到具体 Watcher 实例的映射
+        request.setWatch(watcher != null);//如果有 Watcher 设置，那么这里的标志位为 true，否则为 false
         GetDataResponse response = new GetDataResponse();
         cnxn.queuePacket(h, new ReplyHeader(), request, response, cb, clientPath, serverPath, ctx, wcb);
     }

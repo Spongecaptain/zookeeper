@@ -512,12 +512,15 @@ public class ClientCnxn {
             }
             sessionState = event.getState();
             final Set<Watcher> watchers;
+            //注意，在 ClientCnxn.SendThread.readResponse() 方法中 materializedWatchers 为 null
             if (materializedWatchers == null) {
                 // materialize the watchers based on the event
+                //这里向 ZKWatchManager 实例索要能处理此 Event 的 Watcher 实例（多个，以 Set 容器保存）
                 watchers = watchManager.materialize(event.getState(), event.getType(), event.getPath());
             } else {
                 watchers = new HashSet<>(materializedWatchers);
             }
+            //WatcherSetEventPair 类实例的作用就在于封装 Watcher 以及 Event，前者是事件处理器（处理器可以有多种），后者是事件
             WatcherSetEventPair pair = new WatcherSetEventPair(watchers, event);
             // queue the pair (watch set & event) for later processing
             waitingEvents.add(pair);
@@ -552,11 +555,11 @@ public class ClientCnxn {
             try {
                 isRunning = true;
                 while (true) {
-                    Object event = waitingEvents.take();
-                    if (event == eventOfDeath) {
+                    Object event = waitingEvents.take();//从队列中取出事件
+                    if (event == eventOfDeath) {//如果队列中的元素就是这里的字段 eventOdDeath 所指向的事件
                         wasKilled = true;
                     } else {
-                        processEvent(event);
+                        processEvent(event);//处理事件
                     }
                     if (wasKilled) {
                         synchronized (waitingEvents) {
@@ -574,6 +577,11 @@ public class ClientCnxn {
             LOG.info("EventThread shut down for session: 0x{}", Long.toHexString(getSessionId()));
         }
 
+        /**
+         * 处理事件的第一步就是判断事件类型，事件类型有：WatcherSetEventPair、LocalCallback、StatCallback ...
+         * 利用各种 if else 语句来实现最终的逻辑确实有点 low，使用设计模式可以漂亮一点
+         * @param event
+         */
         private void processEvent(Object event) {
             try {
                 if (event instanceof WatcherSetEventPair) {
@@ -741,19 +749,24 @@ public class ClientCnxn {
 
     // @VisibleForTesting
     protected void finishPacket(Packet p) {
-        int err = p.replyHeader.getErr();
+        int err = p.replyHeader.getErr();//得到响应中的错误信息码
         if (p.watchRegistration != null) {
             p.watchRegistration.register(err);
         }
         // Add all the removed watch events to the event queue, so that the
         // clients will be notified with 'Data/Child WatchRemoved' event type.
+        // 这里将从 Package 实例中取出对应的 Watcher 并注册到 ZKWatchManager 实例中
         if (p.watchDeregistration != null) {
             Map<EventType, Set<Watcher>> materializedWatchers = null;
             try {
+                //将当前路径错误码对应的 Watcher 实例移除，并将这些移除的 Watcher 作为一个 Map 集合的 Value 返回
+
+                //TODO 这里不是很能看懂删除逻辑，.....明天再分析
                 materializedWatchers = p.watchDeregistration.unregister(err);
                 for (Entry<EventType, Set<Watcher>> entry : materializedWatchers.entrySet()) {
                     Set<Watcher> watchers = entry.getValue();
                     if (watchers.size() > 0) {
+                        //这里将
                         queueEvent(p.watchDeregistration.getClientPath(), err, watchers, entry.getKey());
                         // ignore connectionloss when removing from local
                         // session
@@ -900,11 +913,14 @@ public class ClientCnxn {
                 }
               return;
             case NOTIFICATION_XID://事件通知响应
+                //打印日志
                 LOG.debug("Got notification session id: 0x{}",
                     Long.toHexString(sessionId));
+                //构造一个新的 WatcherEvent 实例
                 WatcherEvent event = new WatcherEvent();
+                //WatcherEvent.deserialize() 方法将 BinaryInputArchive 反序列化为 WatcherEvent 实例
                 event.deserialize(bbia, "response");
-
+                //转换路径表示与路径修正
                 // convert from a server path to a client path
                 if (chrootPath != null) {
                     String serverPath = event.getPath();
@@ -917,9 +933,11 @@ public class ClientCnxn {
                              event.getPath(), chrootPath);
                      }
                 }
-
+                //将用于网络传输的 WatcherEvent 实例转换为用于逻辑操作的 WatchedEvent 实例
                 WatchedEvent we = new WatchedEvent(event);
+                //打印日志
                 LOG.debug("Got {} for session id 0x{}", we, Long.toHexString(sessionId));
+                //EventThread 实例的 queueEvent() 方法的主要功能就是将一个 WatchedEvent 实例加入其内部的 waitingEvents 队列中
                 eventThread.queueEvent(we);
                 return;
             default:
@@ -972,7 +990,12 @@ public class ClientCnxn {
 
                 LOG.debug("Reading reply session id: 0x{}, packet:: {}", Long.toHexString(sessionId), packet);
             } finally {
-                //这里最主要的逻辑便是唤醒等待 Package 的 ZooKeeper 客户端线程¡
+                /**
+                 * finishPacket 方法主要有两个逻辑：
+                 * 1. 在同步阻塞模式下唤醒等待 Package 的 ZooKeeper 客户端线程
+                 * 2. 根据响应是否有 Watcher 标志符来决定是否将对应的 Watcher 注册到 ZKWatchManager 中去
+                 */
+
                 finishPacket(packet);
             }
         }
@@ -1682,7 +1705,8 @@ public class ClientCnxn {
         // Note that we do not generate the Xid for the packet yet. It is
         // generated later at send-time, by an implementation of ClientCnxnSocket::doIO(),
         // where the packet is actually sent.
-        // 将请求头、返回头、请求内容、返回内容、watch 注册等实例封装为一个 Packet 实例
+        // 将请求头、返回头、请求内容、返回内容、WatchRegistration 等实例封装为一个 Packet 实例
+        // 注意：Package 是有完成的 Watcher 映射注册信息的
         packet = new Packet(h, r, request, response, watchRegistration);
         packet.cb = cb;
         packet.ctx = ctx;
