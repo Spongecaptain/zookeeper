@@ -97,7 +97,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                     initialized = true;
                 } else {//如果不是连接已经处于初始化状态，说明读结果是一个其他请求的结果（例如 ping 包的响应，或者 create 等命令的响应）
                     //通过 SendThread 的 readResponse(ByteBuffer incomingBuffer) 方法来处理一个可读 ChannelSocket 事件
-                    sendThread.readResponse(incomingBuffer);
+                    sendThread.readResponse(incomingBuffer);//读取来自 ZooKeeper 服务端响应/消息的方法入口
                     lenBuffer.clear();
                     incomingBuffer = lenBuffer;
                     updateLastHeard();

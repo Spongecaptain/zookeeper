@@ -556,7 +556,7 @@ public class ClientCnxn {
                 isRunning = true;
                 while (true) {
                     Object event = waitingEvents.take();//从队列中取出事件
-                    if (event == eventOfDeath) {//如果队列中的元素就是这里的字段 eventOdDeath 所指向的事件
+                    if (event == eventOfDeath) {//事件是否已经被取消了
                         wasKilled = true;
                     } else {
                         processEvent(event);//处理事件
@@ -580,15 +580,19 @@ public class ClientCnxn {
         /**
          * 处理事件的第一步就是判断事件类型，事件类型有：WatcherSetEventPair、LocalCallback、StatCallback ...
          * 利用各种 if else 语句来实现最终的逻辑确实有点 low，使用设计模式可以漂亮一点
+         * 我们这里的关注重点是 WatcherSetEventPair，其包含了 Watchers 用于处理事件，以及事件本身 Event 实例
          * @param event
          */
         private void processEvent(Object event) {
             try {
+                //WatcherSetEventPair 这是我们的关注重点
                 if (event instanceof WatcherSetEventPair) {
                     // each watcher will process the event
                     WatcherSetEventPair pair = (WatcherSetEventPair) event;
+                    //这里的处理逻辑非常简单，就是遍历 Set<Watcher> 容器，每一个 Watcher 都处理一次 Event
                     for (Watcher watcher : pair.watchers) {
                         try {
+                            //来源于 Watcher 接口的 process(WatchedEvent event) 方法
                             watcher.process(pair.event);
                         } catch (Throwable t) {
                             LOG.error("Error while calling watcher.", t);
@@ -748,20 +752,21 @@ public class ClientCnxn {
     }
 
     // @VisibleForTesting
+    // 我们要记得一件事：如果客户端偶注册 Watcher，那么通过这里的 Package 就能够拿到对应的 Watcher 的注册信息
     protected void finishPacket(Packet p) {
-        int err = p.replyHeader.getErr();//得到响应中的错误信息码
+        int err = p.replyHeader.getErr();//得到响应中的错误信息码，关于错误信息码最需要提醒的一点是其实际上就是响应状态码，可以表示成功
+        // 这里将从 Package 实例中取出对应的 Watcher 并注册到 ZKWatchManager 实例中
+        // 如果状态码不为正常(为 0 值)，那么就不会选择将此 Package 内的 WatchRegistration 注册到 WatchManager 中
         if (p.watchRegistration != null) {
             p.watchRegistration.register(err);
         }
         // Add all the removed watch events to the event queue, so that the
         // clients will be notified with 'Data/Child WatchRemoved' event type.
-        // 这里将从 Package 实例中取出对应的 Watcher 并注册到 ZKWatchManager 实例中
+
         if (p.watchDeregistration != null) {
             Map<EventType, Set<Watcher>> materializedWatchers = null;
             try {
-                //将当前路径错误码对应的 Watcher 实例移除，并将这些移除的 Watcher 作为一个 Map 集合的 Value 返回
-
-                //TODO 这里不是很能看懂删除逻辑，.....明天再分析
+                //响应返回错误码时，将 WatchRegistration 注册到 WatchManager 中
                 materializedWatchers = p.watchDeregistration.unregister(err);
                 for (Entry<EventType, Set<Watcher>> entry : materializedWatchers.entrySet()) {
                     Set<Watcher> watchers = entry.getValue();
@@ -937,7 +942,8 @@ public class ClientCnxn {
                 WatchedEvent we = new WatchedEvent(event);
                 //打印日志
                 LOG.debug("Got {} for session id 0x{}", we, Long.toHexString(sessionId));
-                //EventThread 实例的 queueEvent() 方法的主要功能就是将一个 WatchedEvent 实例加入其内部的 waitingEvents 队列中
+                //EventThread.queueEvent() 方法的主要功能就是将一个 WatchedEvent 实例加入其内部的 waitingEvents 队列中
+                //注意：在 waitingEvents 队列中的元素最终会被 EventThread 来消费
                 eventThread.queueEvent(we);
                 return;
             default:
@@ -994,6 +1000,8 @@ public class ClientCnxn {
                  * finishPacket 方法主要有两个逻辑：
                  * 1. 在同步阻塞模式下唤醒等待 Package 的 ZooKeeper 客户端线程
                  * 2. 根据响应是否有 Watcher 标志符来决定是否将对应的 Watcher 注册到 ZKWatchManager 中去
+                 * 注意事项：这里还是要强调一点，如果一旦发现来自服务端的响应为 Ping、鉴权、事件通知，那么并不能运行到这里，
+                 * 在 switch-case 中 case 语句块中就会返回。换言之，只有正常的请求的响应（例如 getData() 操作的请求才会到这里）
                  */
 
                 finishPacket(packet);
@@ -1707,6 +1715,8 @@ public class ClientCnxn {
         // where the packet is actually sent.
         // 将请求头、返回头、请求内容、返回内容、WatchRegistration 等实例封装为一个 Packet 实例
         // 注意：Package 是有完成的 Watcher 映射注册信息的
+        // 注意：Package 在序列化时，并不会将 Watcher 一并进行序列化传输，
+        // 而是选择将其排除在外，封装的意义在于通过 Package 能够找到 Watcher 的注册信息
         packet = new Packet(h, r, request, response, watchRegistration);
         packet.cb = cb;
         packet.ctx = ctx;
