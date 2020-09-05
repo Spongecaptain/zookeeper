@@ -61,6 +61,12 @@ import org.slf4j.LoggerFactory;
  * Typical (default) thread counts are: on a 32 core machine, 1 accept thread,
  * 1 connection expiration thread, 4 selector threads, and 64 worker threads.
  */
+
+/**
+ * 这是一个工厂类，内部管理着线程以及线程池
+ * 线程以及线程池的规模由 ServerCnxnfactory 类的 configure() 等方法（多个重载方法）来决定，具体可以从这个方法入手来看规模是如何决定的
+ *
+ */
 public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
     private static final Logger LOG = LoggerFactory.getLogger(NIOServerCnxnFactory.class);
