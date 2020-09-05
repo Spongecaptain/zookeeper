@@ -1077,6 +1077,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     @Override
     public synchronized void start() {
+        //getView() 返回一个 key 为 myid,value 为注册信息的 Map，如果这里为 false，说明配置出现问题
         if (!getView().containsKey(myid)) {
             throw new RuntimeException("My id " + myid + " not in the peer list");
         }
