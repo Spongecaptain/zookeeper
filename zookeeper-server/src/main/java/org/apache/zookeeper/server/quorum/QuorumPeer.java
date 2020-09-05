@@ -1083,7 +1083,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         }
         //1. loadDataBase() 方法用于将内存的快照 snapshot 文件以及 transaction log 反序列化到内存中
         loadDataBase();
-        //2. 启动监听客户端连接的 Socket 线程（ZAB 协议中，不仅仅只有 Leader 节点能够处理请求）,其默认实现为 Jdk NIO，可选的实现为 Netty NIO
+        //2. 启动监听客户端连接的工厂类，其有线程（ZAB 协议中，不仅仅只有 Leader 节点能够处理请求）,其默认实现为 Jdk NIO，可选的实现为 Netty NIO
         startServerCnxnFactory();
         try {
             adminServer.start();
