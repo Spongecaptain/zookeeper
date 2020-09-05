@@ -185,6 +185,8 @@ public class NIOServerCnxn extends ServerCnxn {
             if (!initialized) {
                 readConnectRequest();
             } else {
+                //TODO 这里是否存在线程安全问题，难道没有同一个 NIOServerCnxn 同一时刻得到多个请求的情况吗？
+                //NIOServerCnxn#readRequest() 方法负责将读到的字节数据进行反序列化（不过）为一个客户端请求
                 readRequest();
             }
             lenBuffer.clear();
@@ -326,6 +328,7 @@ public class NIOServerCnxn extends ServerCnxn {
 
                 return;
             }
+            //如果是可读事件
             if (k.isReadable()) {
                 int rc = sock.read(incomingBuffer);
                 if (rc < 0) {

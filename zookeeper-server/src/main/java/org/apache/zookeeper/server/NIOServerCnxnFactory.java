@@ -164,8 +164,10 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
      * connections per IP and attempts to cope with running out of file
      * descriptors by briefly sleeping before retrying.
      */
+
     /**
-     *
+     * AcceptThead 没有重写 start() 方法，因此直接查看其 run() 方法即可，其 run() 方法的主要执行逻辑如下：
+     * -
      */
     private class AcceptThread extends AbstractSelectThread {
 
@@ -186,6 +188,8 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
         public void run() {
             try {
+                //AcceptThread 类的 Main Loop
+                //确保循环中服务没有关闭、ServerSocketChannel 没有关闭
                 while (!stopped && !acceptSocket.socket().isClosed()) {
                     try {
                         select();//用于事件的监听
@@ -332,10 +336,16 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
      * If there is no worker thread pool, the SelectorThread performs the I/O
      * directly.
      */
+
+    /**
+     * SelectorThread 线程也没有重写 Thread.start() 方法，因此其运行逻辑集中于 run() 方法上
+     * SelectorThread.run() 方法的运行逻辑如下：
+     * -
+     */
     class SelectorThread extends AbstractSelectThread {
 
         private final int id;
-        private final Queue<SocketChannel> acceptedQueue;
+        private final Queue<SocketChannel> acceptedQueue;//用于存储从 AcceptThread 线程实例传来的 SocketChannel 实例
         private final Queue<SelectionKey> updateQueue;
 
         public SelectorThread(int id) throws IOException {
@@ -380,10 +390,14 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
          */
         public void run() {
             try {
+                //这是 SelectorThread 的 Main Loop
                 while (!stopped) {
                     try {
+                        //注意：虽然 SelectorThread 与 AcceptThread 类都由 select() 方法，但它们的执行逻辑不同
                         select();
+                        //负责接收来自 AcceptThread 实例写入 acceptedQueue 队列中的 SocketChannel 实例，，
                         processAcceptedConnections();
+                        //重新开始哪些可以进行 Select 的 SelectionKey
                         processInterestOpsUpdateRequests();
                     } catch (RuntimeException e) {
                         LOG.warn("Ignoring unexpected runtime exception", e);
@@ -391,7 +405,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                         LOG.warn("Ignoring unexpected exception", e);
                     }
                 }
-
+                //下面的逻辑主要用于关闭相关资源，这里不属于重点
                 // Close connections still pending on the selector. Any others
                 // with in-flight work, let drain out of the work queue.
                 for (SelectionKey key : selector.keys()) {
@@ -450,7 +464,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
          * I/O is run directly by this thread.
          */
         private void handleIO(SelectionKey key) {
-            //将此读写 IO 事件包装为一个 IOWorkRequest 实例
+            //将此读写 IO 事件对应的 SelectionKey 包装为一个 IOWorkRequest 实例，封装的主要意义在于 IOWorkRequest 可以被线程池处理
             IOWorkRequest workRequest = new IOWorkRequest(this, key);
             NIOServerCnxn cnxn = (NIOServerCnxn) key.attachment();
 
@@ -473,9 +487,12 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             while (!stopped && (accepted = acceptedQueue.poll()) != null) {
                 SelectionKey key = null;
                 try {
+                    //将 SocketChannel 实例注册到 Selector 中，并表示对可读事件感兴趣
                     key = accepted.register(selector, SelectionKey.OP_READ);
                     NIOServerCnxn cnxn = createConnection(accepted, key, this);
+                    //将 NIOServerCnxn 实例作为 SelectionKey 的附件，方便在产生可读事件时方便地获取到其一一对应的 NIOServerCnxn 实例
                     key.attach(cnxn);
+                    //注册 NIOServerCnxn 实例
                     addCnxn(cnxn);
                 } catch (IOException e) {
                     // register, createConnection
@@ -495,7 +512,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                 if (!key.isValid()) {
                     cleanupSelectionKey(key);
                 }
-                NIOServerCnxn cnxn = (NIOServerCnxn) key.attachment();
+                NIOServerCnxn cnxn = (NIOServerCnxn) key.attachment();//可以注意到，ServerCnxn 作为 SelectionKey 实例的附件而存在
                 if (cnxn.isSelectable()) {
                     key.interestOps(cnxn.getInterestOps());
                 }
@@ -521,12 +538,14 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         }
 
         public void doWork() throws InterruptedException {
+            //检查有效性
             if (!key.isValid()) {
                 selectorThread.cleanupSelectionKey(key);
                 return;
             }
-
+            //检查是否为可读可写事件
             if (key.isReadable() || key.isWritable()) {
+                //调用 NIOServerCnxn#doIO() 方法来完成 IO 事件的处理
                 cnxn.doIO(key);
 
                 // Check if we shutdown or doIO() closed this connection
@@ -538,6 +557,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                     selectorThread.cleanupSelectionKey(key);
                     return;
                 }
+                //更新该 NIOServerCnxn 实例的过期时间，避免被清理
                 touchCnxn(cnxn);
             }
 

@@ -151,6 +151,8 @@ public class WorkerService {
                     workRequest.cleanup();
                     return;
                 }
+                //可见 ScheduledWorkRequest 所实现的 Runnable 接口的执行逻辑就是调用 WorkRequest.doWork() 方法
+                //我们在这里可以直接移步到 NIOServerCnxnFactory.IOWorkRequest#doWork() 方法
                 workRequest.doWork();
             } catch (Exception e) {
                 LOG.warn("Unexpected exception", e);
