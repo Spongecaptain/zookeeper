@@ -62,6 +62,7 @@ public class ZooKeeperServerMain {
      * @param args the configfile or the port datadir [ticktime]
      */
     public static void main(String[] args) {
+        //单机模式下的 ZooKeeper 启动逻辑与集群模式非常相似，这里是单机模式启动，集群模式请见：QuorumPeerMain.main() 方法
         ZooKeeperServerMain main = new ZooKeeperServerMain();
         try {
             main.initializeAndRun(args);
@@ -101,14 +102,15 @@ public class ZooKeeperServerMain {
         } catch (JMException e) {
             LOG.warn("Unable to register log4j JMX control", e);
         }
-
+        //1. 配置类构造：ServerConfig 是单机模式下的配置信息存储实例
         ServerConfig config = new ServerConfig();
+        //2. 配置类根据配置文件初始化
         if (args.length == 1) {
             config.parse(args[0]);
         } else {
             config.parse(args);
         }
-
+        //3. 依靠于配置实例启动单机模式下的 ZooKeeperServer
         runFromConfig(config);
     }
 
@@ -119,6 +121,7 @@ public class ZooKeeperServerMain {
      * @throws AdminServerException
      */
     public void runFromConfig(ServerConfig config) throws IOException, AdminServerException {
+        System.out.println("Hello Spongecaptain!");
         LOG.info("Starting server");
         FileTxnSnapLog txnLog = null;
         try {

@@ -77,7 +77,7 @@ public class QuorumPeerMain {
 
     private static final String USAGE = "Usage: QuorumPeerMain configfile";
 
-    protected QuorumPeer quorumPeer;
+    protected QuorumPeer quorumPeer;//QuorumPeer 代表当前 ZooKeeper 集群内的当前服务器
 
     /**
      * To start the replicated server specify the configuration file name on
@@ -86,9 +86,9 @@ public class QuorumPeerMain {
      *
      * Spongecaptain:不管 ZooKeeper 是集群模式（包括伪集群模式）还是单机模式，这是 ZooKeeper 服务端启动类的入口
      */
-    //入口参数用于说明配置文件的路径，比如我在集群模式下设置的 "conf/zoo1.cfg" 参数
+    //入口参数 args 为配置文件的路径，比如我在集群模式下设置的 "conf/zoo1.cfg" 参数
     public static void main(String[] args) {
-        System.out.println("Spongecaptain Welcome to ZooKeeper!");//自己额外缇娜及
+        System.out.println("Spongecaptain Welcome to ZooKeeper!");//自己额外写的欢迎打印
         QuorumPeerMain main = new QuorumPeerMain();
         try {
             //1. QuorumPeerMain.main() 方法主要的执行逻辑实际上是由 QuorumPeerMain.initializeAndRun(String[] args) 方法来完成的
@@ -125,7 +125,13 @@ public class QuorumPeerMain {
     }
 
     protected void initializeAndRun(String[] args) throws ConfigException, IOException, AdminServerException {
-        //1.解析配置文件(文件 --解析为--> Java 堆内实例)
+        /**
+         * 注意事项：ZooKeeper 中在集群模式与单机模式下使用不同的配置类
+         * - 集群模式：QuorumPeerConfig
+         * - 单机模式：ServerConfig
+         */
+
+        //1.解析集群配置文件(文件 --解析为--> Java 堆内实例)
         QuorumPeerConfig config = new QuorumPeerConfig();
         if (args.length == 1) {
             config.parse(args[0]);//args[0] 为配置文件路径字符串
@@ -146,6 +152,10 @@ public class QuorumPeerMain {
         } else {
             LOG.warn("Either no config or no quorum defined in config, running in standalone mode");
             //4. 单机模式下，启动当前 ZooKeeper 服务端实例
+            /**
+             * 注意事项：单机模式下的 ZooKeeper 可以直接利用 ZooKeeperServerMain 的 main() 方法作为入口方法
+             * 即我们直接可以在 Run/Debug 的 Main class 设置为 ZooKeeperServerMain 类
+             */
             // there is only server in the quorum -- run as standalone
             ZooKeeperServerMain.main(args);
         }
@@ -153,12 +163,14 @@ public class QuorumPeerMain {
 
     public void runFromConfig(QuorumPeerConfig config) throws IOException, AdminServerException {
         try {
+            // 注册 log4j 的 Mbean
             ManagedUtil.registerLog4jMBeans();
         } catch (JMException e) {
             LOG.warn("Unable to register log4j JMX control", e);
         }
-
+        // 我们可以注意到：在配置文件中的 myid 属性在类中就是 serverId
         LOG.info("Starting quorum peer, myid=" + config.getServerId());
+        // MetricsProvider 用于收集 Metrics，然后将值发布到外部设施（不是重点）
         MetricsProvider metricsProvider;
         try {
             metricsProvider = MetricsProviderBootstrap.startMetricsProvider(
@@ -169,14 +181,16 @@ public class QuorumPeerMain {
         }
         try {
             ServerMetrics.metricsProviderInitialized(metricsProvider);
+            // ServerCnxn 表示一个接收到客户端连接，ServerCnxnFactory 则是生产 ServerCnxn 实例的工厂
             ServerCnxnFactory cnxnFactory = null;
             ServerCnxnFactory secureCnxnFactory = null;
 
             if (config.getClientPortAddress() != null) {
                 cnxnFactory = ServerCnxnFactory.createFactory();
+                //配置 ServerCnxn 工厂，前两个参数依次为：当前 ZooKeeper 主机监听的端口、单个客户端可以连接到当前 ZooKeeper 主机的连接最大个数
                 cnxnFactory.configure(config.getClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), false);
             }
-
+            //这是 Secure 连接模式下的 secureCnxn 工厂，运行逻辑是类似的
             if (config.getSecureClientPortAddress() != null) {
                 secureCnxnFactory = ServerCnxnFactory.createFactory();
                 secureCnxnFactory.configure(config.getSecureClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), true);

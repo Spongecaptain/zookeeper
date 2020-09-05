@@ -49,6 +49,7 @@ import org.slf4j.LoggerFactory;
  * of txnlog and snapshot
  * classes
  */
+//FileTxnSnapLog 实际上是一个工具类，用于事务日志以及快照的持久化
 public class FileTxnSnapLog {
 
     //the directory containing the
@@ -240,7 +241,7 @@ public class FileTxnSnapLog {
      * @return the highest zxid restored
      * @throws IOException
      */
-    // 反序列化：把文件系统中的数据文件还原到 DataTree 中，ZooKeeper 启动的时候调用，返回值是本地（快照以及日志）中最大的 zxid
+    // 反序列化：把文件系统中的数据文件反序列化到 DataTree 中，ZooKeeper 启动的时候调用，返回值是本地（快照以及日志）中最大的 zxid
     public long restore(DataTree dt, Map<Long, Integer> sessions, PlayBackListener listener) throws IOException {
         long snapLoadingStartTime = Time.currentElapsedTime();
         //(Step 1)遍历快照文件，生成树。
@@ -319,6 +320,8 @@ public class FileTxnSnapLog {
      * @return the highest zxid restored.
      * @throws IOException
      */
+
+    //这个方法用于当内存快照落后于事务日志时，快速地将落后的部分日志作用于内存中的快照
     public long fastForwardFromEdits(
         DataTree dt,
         Map<Long, Integer> sessions,

@@ -110,6 +110,7 @@ import org.slf4j.LoggerFactory;
  *
  * The request for the current leader will consist solely of an xid: int xid;
  */
+//这个类代表集群中的当前节点，是一个线程
 public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider {
 
     private static final Logger LOG = LoggerFactory.getLogger(QuorumPeer.class);
@@ -198,16 +199,17 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         this.multiAddressReachabilityCheckEnabled = multiAddressReachabilityCheckEnabled;
         LOG.info("multiAddress.reachabilityCheckEnabled set to {}", multiAddressReachabilityCheckEnabled);
     }
-
+    //这个类就是记录每一个配置中 server 的主要信息
+    //当前 ZooKeeper 主机节点通过此类与其他类进行节点间通信
     public static class QuorumServer {
 
-        public MultipleAddresses addr = new MultipleAddresses();
+        public MultipleAddresses addr = new MultipleAddresses();//用于与 Leader 节点同步的地址，新特性：一个节点可以暴露与监听本地用于选举的地址
 
-        public MultipleAddresses electionAddr = new MultipleAddresses();
+        public MultipleAddresses electionAddr = new MultipleAddresses();//用于选举的地址
 
-        public InetSocketAddress clientAddr = null;
+        public InetSocketAddress clientAddr = null;//用于与客户端通信的地址
 
-        public long id;
+        public long id;//机器的 serverId，也就是配置文件中的 myid
 
         public String hostname;
 
@@ -474,18 +476,19 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         }
 
     }
-
+    //ServerState 为内部枚举类，用于表示节点的状态
     public enum ServerState {
-        LOOKING,
-        FOLLOWING,
-        LEADING,
-        OBSERVING
+        LOOKING,//寻找 Leader 状态。当服务器处于该状态时，它会认为当前集群中没有 Leader，因此需要进入 Leader 选举状态
+        FOLLOWING,//表示节点处于 Follower
+        LEADING,//表示节点处于 Leader
+        OBSERVING//表示节点处于 Observer
     }
 
     /**
      * (Used for monitoring) shows the current phase of
      * Zab protocol that peer is running.
      */
+    //ZabState 为内部枚举类，用于表示集群所处的状态
     public enum ZabState {
         ELECTION,
         DISCOVERY,
@@ -512,9 +515,10 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
      * We need this distinction to decide which ServerState to move to when
      * conditions change (e.g. which state to become after LOOKING).
      */
+    // 表示节点在集群中是否能够参与竞选投票过程）
     public enum LearnerType {
-        PARTICIPANT,
-        OBSERVER
+        PARTICIPANT,//参与者：参与 Leader 的选举过程，自己也可以成为 Leader
+        OBSERVER//观察者：不参与 Leader 选举过程
     }
 
     /*
@@ -767,6 +771,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
      *
      *
      */
+    //旧版本中用于选举（是基于 UDP 版本的选举算法）
     @Deprecated
     class ResponderThread extends ZooKeeperThread {
 
@@ -1085,7 +1090,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             LOG.warn("Problem starting AdminServer", e);
             System.out.println(e);
         }
-        //3. 初始化用于选举 Leader 服务器的 QuorumCnxManager 实例（代表传输层），然后建立应用层与传输层之间的关系
+        //3. 首先，初始化用于选举 Leader 服务器的 QuorumCnxManager 实例（代表传输层）
+        // 然后，初始化选举实例 Election 实例（代表应用层）
+        // 最后，建立应用层与传输层之间的关系
         startLeaderElection();
         //4. 启动监听 JVM 性能的线程
         startJvmPauseMonitor();
@@ -1156,6 +1163,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
     }
     //开始选举 Leader 的准备工作
     public synchronized void startLeaderElection() {
+        //生成次轮选举的投票，当前节点首先会把票投给自己
         try {
             if (getPeerState() == ServerState.LOOKING) {
                 currentVote = new Vote(myid, getLastLoggedZxid(), getCurrentEpoch());
@@ -1353,14 +1361,18 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     @Override
     public void run() {
+        //利用配置信息中的 myid 以及其他配置通过 Thread.setName() 方法给 QuorumPeer 线程命名
         updateThreadName();
 
         LOG.debug("Starting quorum peer");
         try {
             jmxQuorumBean = new QuorumBean(this);
             MBeanRegistry.getInstance().register(jmxQuorumBean, null);
+            //遍历循环所有的 ZooKeeper 节点，注意事项：包括自身 ZooKeeper 节点（通过 debug 可以很容易证明这一点）
+            //遍历的的逻辑主要就是注册相关节点
             for (QuorumServer s : getView().values()) {
                 ZKMBeanInfo p;
+                //如果此条件成立，说明此轮遍历中节点就是本 ZooKeeper 主机对应的节点
                 if (getId() == s.id) {
                     p = jmxLocalPeerBean = new LocalPeerBean(this);
                     try {
@@ -1369,6 +1381,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         LOG.warn("Failed to register with JMX", e);
                         jmxLocalPeerBean = null;
                     }
+                //非本 ZooKeeper 主机对应的节点，也就是远程节点
                 } else {
                     RemotePeerBean rBean = new RemotePeerBean(this, s);
                     try {
@@ -1390,13 +1403,17 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
              * 这是 ZooKeeper 最核心的主循环线程模型
              */
             while (running) {
-                //得到（集群中）本机服务器的状态
+                //得到集群中本主机的状态
                 switch (getPeerState()) {
                 //处于 LOOKING 状态说明当前服务器并不知道哪一台服务器为 Leader（比如刚初始化、Leader 服务器发生了宕机）
                 case LOOKING:
                     LOG.info("LOOKING");
                     ServerMetrics.getMetrics().LOOKING_COUNT.add(1);
-                    //不关心只读服务器
+                    /**
+                     * 只读模式
+                     * 如果开启了只读模式，那么会用一个线程单独去开启一个 ReadOnlyZooKeeperServer，
+                     * 来专门处理读请求，然后再去进行领导者选举
+                     */
                     if (Boolean.getBoolean("readonlymode.enabled")) {
                         LOG.info("Attempting to start ReadOnlyZooKeeperServer");
 
@@ -1409,7 +1426,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         // Thread is used here because otherwise it would require
                         // changes in each of election strategy classes which is
                         // unnecessary code coupling.
-                        // 这里会启动一个异步线程来完成领导者选举
+                        // 这里会启动一个异步线程（这有在只读模式下才会创建一个异步线程实例）
                         Thread roZkMgr = new Thread() {
                             public void run() {
                                 try {
@@ -1444,6 +1461,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                             roZkMgr.interrupt();
                             roZk.shutdown();
                         }
+                     //LOOKING 状态下的非只读模式
                     } else {
                         try {
                             reconfigFlagClear();
@@ -1451,6 +1469,11 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                                 shuttingDownLE = false;
                                 startLeaderElection();
                             }
+                            /** 这里是选举算法的入口
+                             *  makeLEStrategy() 方法负责得到具体的选举算法实例：Election 类实例
+                             *  lookForLeader() 开始执行选举算法逻辑
+                             *  实际上 ZooKeeper 内部的选举算法只有一个（没得选择）：FastLeaderElection
+                             */
                             setCurrentVote(makeLEStrategy().lookForLeader());
                         } catch (Exception e) {
                             LOG.warn("Unexpected exception", e);
@@ -1490,6 +1513,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                     } finally {
                         follower.shutdown();
                         setFollower(null);
+                        //updateServerState() 用于可能的节点状态更新，
+                        //当节点的 reconfigFlag 被设置为 false 时，就会将节点状态更新为 LOOKING 状态
+                        //根据节点的 learnerType 字段值来更新节点状态：LEADING、FOLLOWING、OBSERVING、LOOKING 等状态
                         updateServerState();
                     }
                     break;
@@ -1589,6 +1615,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
      * A 'view' is a node's current opinion of the membership of the entire
      * ensemble.
      */
+    //这里的视图指的是集群中所有 Server(包括当前 ZooKeeper 主机自身)的 QuorumPeer.QuorumServer 实例
     public Map<Long, QuorumPeer.QuorumServer> getView() {
         return Collections.unmodifiableMap(getQuorumVerifier().getAllMembers());
     }
@@ -1597,6 +1624,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
      * Observers are not contained in this view, only nodes with
      * PeerType=PARTICIPANT.
      */
+    //这里的视图排除了 Observer 节点
     public Map<Long, QuorumPeer.QuorumServer> getVotingView() {
         return getQuorumVerifier().getVotingMembers();
     }

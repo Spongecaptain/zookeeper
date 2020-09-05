@@ -174,6 +174,13 @@ public abstract class ServerCnxnFactory {
         }
     }
 
+    /**
+     * 我们对外暴露 createFactory() 方法来提供一个一个 ServerCnxnFactory 工厂类
+     * @param clientPort 监听端口，ZooKeeper 客户端连接此端口与 ZooKeeper 服务器进行通信
+     * @param maxClientCnxns 最大客户端连接数
+     * @return
+     * @throws IOException
+     */
     public static ServerCnxnFactory createFactory(int clientPort, int maxClientCnxns) throws IOException {
         return createFactory(new InetSocketAddress(clientPort), maxClientCnxns, -1);
     }
@@ -187,8 +194,12 @@ public abstract class ServerCnxnFactory {
     }
 
     public static ServerCnxnFactory createFactory(InetSocketAddress addr, int maxClientCnxns, int backlog) throws IOException {
+        //这里我们以基于 JDK NIO 的 NIOServerCnxnFactory 工厂类实例进行说明
+        //1. 创建 ServerCnxnFactory 工厂实例，具体类型由 ServerCnxnFactory.ZOOKEEPER_SERVER_CNXN_FACTORY 字段决定
         ServerCnxnFactory factory = createFactory();
+        //2. 配置 ServerCnxnFactory 工厂实例
         factory.configure(addr, maxClientCnxns, backlog);
+        //3. 返回工厂实例
         return factory;
     }
 

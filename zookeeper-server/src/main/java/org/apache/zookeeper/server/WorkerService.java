@@ -112,7 +112,7 @@ public class WorkerService {
             workRequest.cleanup();
             return;
         }
-
+        //将 WorkRequest 实例封装为 ScheduledWorkRequest 实例（主要的用意是将其封装为一个 Runnable 实例）
         ScheduledWorkRequest scheduledWorkRequest = new ScheduledWorkRequest(workRequest);
 
         // If we have a worker thread pool, use that; otherwise, do the work
@@ -121,9 +121,9 @@ public class WorkerService {
         if (size > 0) {
             try {
                 // make sure to map negative ids as well to [0, size-1]
-                int workerNum = ((int) (id % size) + size) % size;
-                ExecutorService worker = workers.get(workerNum);
-                worker.execute(scheduledWorkRequest);
+                int workerNum = ((int) (id % size) + size) % size;//用于负载均衡，确保线程池中的线程均匀地处理 IO 事件
+                ExecutorService worker = workers.get(workerNum);//得到一个线程
+                worker.execute(scheduledWorkRequest);//线程来处理此 IO 事件
             } catch (RejectedExecutionException e) {
                 LOG.warn("ExecutorService rejected execution", e);
                 workRequest.cleanup();
@@ -131,10 +131,10 @@ public class WorkerService {
         } else {
             // When there is no worker thread pool, do the work directly
             // and wait for its completion
-            scheduledWorkRequest.run();
+            scheduledWorkRequest.run();//如果当前线程池中没有线程，那么直接当前线程来执行此 IO 任务
         }
     }
-
+W
     private class ScheduledWorkRequest implements Runnable {
 
         private final WorkRequest workRequest;

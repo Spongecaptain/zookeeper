@@ -95,6 +95,21 @@ import org.slf4j.LoggerFactory;
  *
  */
 
+/**
+ * QuorumCnxManager 类使用 TCP 协议来负责集群各台服务器之间的底层 Leader 选举下的网络层通信
+ * 它为每一对服务器之间维护了一对连接（如果集群中有 3 个服务器，那么此类的实例就需要维护 2 个连接，如果有 5 个服务器，那么显然就需要维护 4 对连接）
+ * 最棘手的部分在于这个类需要为每一对服务器之间仅仅维护一对连接，这是这个类的难点，不过为什么会有这个问题？
+ * 主要在于一对服务器中的任意服务器都可以发起连接，虽然每一个服务器用于 Leader 选举的监听端口是固定不变的，
+ * 但是连接发起方的 Socket 地址是没有写死，由操作系统分配一个没有用过的端口(说了这么多，总之一对 Socket 连接是一个四元组，有一个不同即不同)
+ * 为了保证这一特性，QuorumCnxManager 使用了一个简单的策略，在下面具体方法的注释上会有提到
+ *
+ * ZooKeeeper 每一个主机都在 QuorumCnxManager 中为其他主机（Peer）维护了一个队列来发送消息（Message）。
+ * 如果与某一个 Peer 的连接中断，那么会将待发送的 Message 放回到队列中。因为 QuorumCnxManager 类使用 queue 来
+ * 维护与存放发送给其他 peer 的 message，因此我们将消息加入到队列的尾部，这会改变 message 的顺序。
+ * 为什么会改变顺序？
+ * 因为如果要确保顺序，应当将回放的 message 放到队列头部，而不是尾部。从理论上将，回放的 message 比所有队列中的 message 有着更高的发送优先级。
+ * 这并不影响 Leader Election，不过可能会影响连接的保活，但这有待验证。
+ */
 public class QuorumCnxManager {
 
     private static final Logger LOG = LoggerFactory.getLogger(QuorumCnxManager.class);
@@ -134,14 +149,14 @@ public class QuorumCnxManager {
 
     private int cnxTO = 5000;
 
-    final QuorumPeer self;
+    final QuorumPeer self;//指点
 
     /*
      * Local IP address
      */
     final long mySid;
     final int socketTimeout;
-    final Map<Long, QuorumPeer.QuorumServer> view;
+    final Map<Long, QuorumPeer.QuorumServer> view;//视图，Key myid,Value 参与竞选的其他服务器对应在当前主机堆内的 QuorumPeer.QuorumServer 实例
     final boolean listenOnAllIPs;
     private ThreadPoolExecutor connectionExecutor;
     private final Set<Long> inprogressConnections = Collections.synchronizedSet(new HashSet<>());
@@ -153,19 +168,21 @@ public class QuorumCnxManager {
      */
     private AtomicInteger connectionThreadCnt = new AtomicInteger(0);
 
-    /*
+    /**
      * Mapping from Peer to Thread number
-     * 当前主机会利用 QuorumCnxManager 来维护与管理 Leader 选举的传输层，为此，其为每一个其他主机分配了：
-     * 1. 异步工作线程，用于收发消息
-     * 2. 用于发送消息的异步消息队列
-     * 3. 用于存储刚发送去的消息
-     * 与此同时，因为我们当前主机需要和多个其他多台主机进行 Leader 选举的通信，因此使用了 HashMap 用于映射，将服务器 sid（myid） 映射为队列
-     *
+     * 下面的若干字段是 QuorumCnxManager 类的核心，假设集群中有 n 个节点参与 Leader Election，那么其维护了如下实例：
+     * n-1 条异步线程 SendWorker，每一个异步线程对应一个阻塞队列 queueSendMap，每一个线程负责消费阻塞队列上的消息
+     * n-1 条异步线程 RecvWorker，所有异步异步线程仅仅对应一个阻塞队列 recvQueue，一起负责向此队列添加元素
+     * n-1 个阻塞队列 BlockingQueue<ByteBuffer> queueSendMap，用于存储待发送的消息（每一个异步线程一个）
+     * n-1 个 ByteBuffer 用于存储发给其余参与竞选节点的最后一个消息
+     * 1   个阻塞队列 BlockingQueue<Message>，用于存储当前主机接收到的消息（这与发送相比截然不同，不管集群中哪一个节点发来的消息，都统一集中存放在一个队列中）
+     * 我们通过 myid，即 serverId 来进行映射，找到当前主机与某一个参与竞选的其他节点的：异步线程、阻塞队列、最后一个消息。
+     * 注意事项：并没有由 RecvWorker 作为键值组成的 Map，这是因为 SendWorker 与 RecvWorker 总是一一对应，我们通过
+     * myid 来查找 SendWorker 实例，再通过其类内部的 `RecvWorker recvWorker;` 字段来找到 RecvWorker 实例的引用
      */
     final ConcurrentHashMap<Long, SendWorker> senderWorkerMap;// 每台服务器对应的 SendWorker(Worker 为一个异步线程)
     final ConcurrentHashMap<Long, BlockingQueue<ByteBuffer>> queueSendMap;// 需要发送给各个服务器的消息队列
     final ConcurrentHashMap<Long, ByteBuffer> lastMessageSent;// 发送给每台服务器最近的消息
-
 
 
     /*
@@ -378,6 +395,15 @@ public class QuorumCnxManager {
      * If this server has initiated the connection, then it gives up on the
      * connection if it loses challenge. Otherwise, it keeps the connection.
      */
+    /**
+     *
+     * @param electionAddr 要与本机建立 Socket 连接的地址
+     * @param sid 要与本机建立 Socket 连接的服务器 id（myid/sid/serverId 都是同一个概念）
+     *            建立连接连接主要分为  步：
+     *            1.创建 Socket
+     *            2.使用 SSL 握手以及验证（如果需要，可以不这么使用）
+     *            3.执行初始化协议
+     */
     public void initiateConnection(final MultipleAddresses electionAddr, final Long sid) {
         Socket sock = null;
         try {
@@ -469,7 +495,7 @@ public class QuorumCnxManager {
         }
 
     }
-
+    //用于与集群中某一个具体的节点建立 Socket 连接，这里的 sid 就是 myid
     private boolean startConnection(Socket sock, Long sid) throws IOException {
         DataOutputStream dout = null;
         DataInputStream din = null;
@@ -517,7 +543,7 @@ public class QuorumCnxManager {
         }
 
         // If lost the challenge, then drop the new connection
-        // Socket 虽然能够双向连接，但是 ZooKeeper 为了确保两个服务器之间最多存在一条有效的、用于 Leader 选举的 Socket
+        // Socket 虽然能够双向连接，但是 ZooKeeper 为了确保两个服务器之间最多存在一条有效的用于 Leader 选举的 Socket 连接
         // 如果发现对方服务器的 sid 大于本级服务器 id，那么就会主动断开 Socket 连接
         // 换言之，最终只有 sid 较大方，主动发起的 Socket 连接最终才会被持久化，否则很快就会被关闭
         // 关于此，很容易带来疑惑：为什么两个服务器之间 Socket 可以建立两个？Socket 作为一个四元组不会重复吗？
@@ -700,10 +726,17 @@ public class QuorumCnxManager {
      * Processes invoke this message to queue a message to send. Currently,
      * only leader election uses it.
      */
+
+    /**
+     * 将消息发送给
+     * @param sid 主机的 myid，即 serverId（可以是当前主机自身）
+     * @param b 要发送的数据，显然消息传递基于 NIO 实现
+     */
     public void toSend(Long sid, ByteBuffer b) {
         /*
          * If sending message to myself, then simply enqueue it (loopback).
          */
+        //如果消息是给自己发送的，那么当然不需要经过网络，直接将消息进行封装后添加存放本主机的接收消息队列中即可
         if (this.mySid == sid) {
             b.position(0);
             addToRecvQueue(new Message(b.duplicate(), sid));
@@ -714,8 +747,13 @@ public class QuorumCnxManager {
             /*
              * Start a new connection if doesn't have one already.
              */
+            //如果消息是给其他主机发送的，那么就将消息进行封装后加入到阻塞队列中
+            //注意事项：CurrentHashMap.computeIfAbsent() 方法首先判断缓存MAP中是否存在指定key的值，
+            //如果不存在，会自动调用 mappingFunction(key) 计算 key 的 value，然后将 key = value 放入到缓存 Map。
+            //否则，就直接取出 value,总之不管怎么样，我们都能拿到此队列
             BlockingQueue<ByteBuffer> bq = queueSendMap.computeIfAbsent(sid, serverId -> new CircularBlockingQueue<>(SEND_CAPACITY));
             addToSendQueue(bq, b);
+            //下面这个方法是一个异步连接的方法，如果没有连接，则会建立连接
             connectOne(sid);
         }
     }
@@ -750,16 +788,20 @@ public class QuorumCnxManager {
     /**
      * Try to establish a connection to server with id sid.
      * The function will return quickly and the connection will be established asynchronously.
-     *
+     * 重点：这个方法是一个异步的过程，本主机将异步地与入口参数 sid 对应的主机建立连接
+     * 方法返回时，连接不一定已经建立
      *  @param sid  server id
+     *
      */
     synchronized void connectOne(long sid) {
+        //是否已经注册好了一个 Socket 连接
         if (senderWorkerMap.get(sid) != null) {
             LOG.debug("There is a connection already for server {}", sid);
             if (self.isMultiAddressEnabled() && self.isMultiAddressReachabilityCheckEnabled()) {
                 // since ZOOKEEPER-3188 we can use multiple election addresses to reach a server. It is possible, that the
                 // one we are using is already dead and we need to clean-up, so when we will create a new connection
                 // then we will choose an other one, which is actually reachable
+                //异步地检测 Socket 是否依然可达
                 senderWorkerMap.get(sid).asyncValidateIfSocketIsStillReachable();
             }
             return;
@@ -801,6 +843,9 @@ public class QuorumCnxManager {
      * doesn't exist.
      */
 
+    //connectAll() 方法的执行逻辑非常简单，就是进行遍历，与参与竞选的其他所有节点建立连接，通过遍历 connectOne(sid) 实现
+    //注意事项：由于 connectOne() 方法是一个异步的连接方法，因此这个方法也将是异步返回，即在返回时不见得本机已经与其他所有
+    //参与竞选的主机建立好了 Socket 连接
     public void connectAll() {
         long sid;
         for (Enumeration<Long> en = queueSendMap.keys(); en.hasMoreElements(); ) {
@@ -1209,7 +1254,7 @@ public class QuorumCnxManager {
 
         synchronized boolean finish() {
             LOG.debug("Calling SendWorker.finish for {}", sid);
-
+            //防止关闭两次
             if (!running) {
                 /*
                  * Avoids running finish() twice.
@@ -1217,19 +1262,19 @@ public class QuorumCnxManager {
                 return running;
             }
 
-            running = false;
-            closeSocket(sock);
+            running = false;//标志位
+            closeSocket(sock);//关闭网络资源 Socket
 
-            this.interrupt();
+            this.interrupt();//中断 SendWorker 的工作，即让其跳出其 while 循环
             if (recvWorker != null) {
                 recvWorker.finish();
             }
 
             LOG.debug("Removing entry from senderWorkerMap sid={}", sid);
 
-            senderWorkerMap.remove(sid, this);
-            threadCnt.decrementAndGet();
-            return running;
+            senderWorkerMap.remove(sid, this);//注销在 QuorumCnxManager 中的此 SendWorker 线程
+            threadCnt.decrementAndGet();//自减
+            return running;//返回关闭的结果
         }
 
         synchronized void send(ByteBuffer b) throws IOException {
@@ -1310,25 +1355,30 @@ public class QuorumCnxManager {
             LOG.warn("Send worker leaving thread id {} my id = {}", sid, self.getId());
         }
 
-
+        //异步检测 Socket 是否存活的线程
         public void asyncValidateIfSocketIsStillReachable() {
             if (ongoingAsyncValidation.compareAndSet(false, true)) {
+                //构造一个新异步线程实例后，启动
                 new Thread(() -> {
                     LOG.debug("validate if destination address is reachable for sid {}", sid);
+                    //如果 Socket 不为 null 才进行 isReachable() 进行测试，否则什么都不做
                     if (sock != null) {
                         InetAddress address = sock.getInetAddress();
                         try {
+                            //如果 Socket 依然可达（存活），超时时间设置为 500 ms
                             if (address.isReachable(500)) {
                                 LOG.debug("destination address {} is reachable for sid {}", address.toString(), sid);
                                 ongoingAsyncValidation.set(false);
                                 return;
                             }
+                            //如果连接抛出异常（例如超时），那么在 catch 中什么都不做（不过会打印出一条日志）
                         } catch (NullPointerException | IOException ignored) {
                         }
                         LOG.warn(
                           "destination address {} not reachable anymore, shutting down the SendWorker for sid {}",
                           address.toString(),
                           sid);
+                        //如果连接超时等异常（连接失效或超时），那么运行这里 SendWorker.finish() 方法来释放相关资源，最终关闭此线程
                         this.finish();
                     }
                 }).start();
@@ -1467,7 +1517,9 @@ public class QuorumCnxManager {
      * Inserts an element in the {@link #recvQueue}. If the Queue is full, this
      * methods removes an element from the head of the Queue and then inserts the
      * element at the tail of the queue.
-     *
+     * 注意 recvQueue 队列是有默认大小的，默认为 100 大小，如果此队列已经满（通常情况下不会），但是如果已经慢了
+     * 那么加入新的元素时会将队列头的元素移除，并将当前元素加入队列中
+     * 对于选举过程中发生一个消息被移除并不严重，因为即使是上一轮因为消息丢失而无法选举，那么进行下一轮选举就好了。
      * @param msg Reference to the message to be inserted in the queue
      */
     public void addToRecvQueue(final Message msg) {

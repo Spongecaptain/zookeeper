@@ -48,6 +48,9 @@ import org.slf4j.LoggerFactory;
  * This is part of the leader election algorithm.
  */
 
+/**
+ * 首先 FastLeaderElection 是一个应用层选举算法类，其依赖于传输层的 QuorumCnxManager 类来完成消息的收发
+ */
 public class FastLeaderElection implements Election {
 
     private static final Logger LOG = LoggerFactory.getLogger(FastLeaderElection.class);
@@ -233,14 +236,17 @@ public class FastLeaderElection implements Election {
                 while (!stop) {
                     // Sleeps on receive
                     try {
+                        //基于 BlockingQueue<Message> 实现的阻塞，超时时间为 3 s，超时结束后如果队列中仍然没有元素，那么返回 null
                         response = manager.pollRecvQueue(3000, TimeUnit.MILLISECONDS);
+                        //如果队列为空，继续循环（跳转到 while 循环判断）
                         if (response == null) {
                             continue;
                         }
-
+                        //得到消息的字节大小
                         final int capacity = response.buffer.capacity();
 
                         // The current protocol and two previous generations all send at least 28 bytes
+                        //小于 28 字节大小的消息都被认为是非法的
                         if (capacity < 28) {
                             LOG.error("Got a short response from server {}: {}", response.sid, capacity);
                             continue;
@@ -255,7 +261,9 @@ public class FastLeaderElection implements Election {
                         boolean backCompatibility40 = (capacity == 40);
 
                         response.buffer.clear();
-
+                        /**
+                         * 下面的操作主要用于消息的反序列化（这里仅仅根据消息的对应位得到描述消息状态的相关字段）
+                         */
                         // Instantiate Notification and set its attributes
                         Notification n = new Notification();
 
@@ -303,7 +311,9 @@ public class FastLeaderElection implements Election {
                                     try {
                                         rqv = self.configFromString(new String(b));
                                         QuorumVerifier curQV = self.getQuorumVerifier();
+                                        //在 Leader 选举算法中，只有消息的选举版本大于当前竞选版本（任期），才被视作有效，否则不会进入下面的 if 语句进行消息进一步解析
                                         if (rqv.getVersion() > curQV.getVersion()) {
+                                            //在消息的任期版本合法的情况下，进一步解析消息
                                             LOG.info("{} Received version: {} my version: {}",
                                                      self.getId(),
                                                      Long.toHexString(rqv.getVersion()),
@@ -497,11 +507,12 @@ public class FastLeaderElection implements Election {
             public void run() {
                 while (!stop) {
                     try {
+                        //WorkerSender 线程的 run 方法用于消费 FastLeaderElection.sendqueue 队列中的元素
+                        //队列消费元素的超时时间也是设置 3 秒
                         ToSend m = sendqueue.poll(3000, TimeUnit.MILLISECONDS);
                         if (m == null) {
                             continue;
                         }
-
                         process(m);
                     } catch (InterruptedException e) {
                         break;
@@ -516,8 +527,11 @@ public class FastLeaderElection implements Election {
              * @param m     message to send
              */
             void process(ToSend m) {
+                //将消息 Message 序列化为 ByteBuffer 实例
                 ByteBuffer requestBuffer = buildMsg(m.state.ordinal(), m.leader, m.zxid, m.electionEpoch, m.peerEpoch, m.configData);
-
+                //通过属于传输层的 QuorumCnxManager 实例来发送 ByteBuffer
+                //注意事项：实际上，QuorumCnxManager 实例内部也首先将其加入其内部 BlockingQueue<ByteBuffer> 队列中
+                //而 BlockingQueue<ByteBuffer> 队列中的元素则是由 QuorumCnxManager 内部的线程消费的
                 manager.toSend(m.sid, requestBuffer);
 
             }
@@ -526,6 +540,18 @@ public class FastLeaderElection implements Election {
 
         WorkerSender ws;
         WorkerReceiver wr;
+        /**
+         * 注意 WorkerSender 与 WorkerReceiver 线程实例的区别
+         * 它们实际都是消费者线程，不过分别从不同的队列中消费元素
+         *
+         * WorkerSender 负责从 FastLeaderElection.sendqueue 队列中取走元素 ToSend 实例，
+         * 然后在将其序列化为 ByteBuffer 后加入 QuorumCnxManager.queueSendMap 内部的队列中
+         *
+         * WorkerReceiver 负责从 FastLeaderElection.recvQueue 队列中取走元素 Message 元素，
+         * 然后通过读取消息中的相关字段，得到选举过程中的具体消息语义，然后采取行动
+         */
+
+
         Thread wsThread = null;
         Thread wrThread = null;
 
@@ -565,12 +591,12 @@ public class FastLeaderElection implements Election {
 
     }
 
-    QuorumPeer self;
+    QuorumPeer self;//代表集群中的当前主机
     Messenger messenger;
-    AtomicLong logicalclock = new AtomicLong(); /* Election instance */
-    long proposedLeader;
-    long proposedZxid;
-    long proposedEpoch;
+    AtomicLong logicalclock = new AtomicLong();// self's round number /* Election instance */
+    long proposedLeader;//proposed server id, self's server id at first
+    long proposedZxid;//proposed server's last zxid, self's last zxid at first
+    long proposedEpoch;// proposed server's round number, read from CURRENT_EPOCH_FILENAME at first
 
     /**
      * Returns the current vlue of the logical clock counter
@@ -631,6 +657,7 @@ public class FastLeaderElection implements Election {
     public FastLeaderElection(QuorumPeer self, QuorumCnxManager manager) {
         this.stop = false;
         this.manager = manager;
+        //下面的逻辑主要有俩：初始化 sendqueue 与 recvqueue 并且 WorkerSender 与 WorkerReceiver 线程
         starter(self, manager);
     }
 
@@ -691,6 +718,8 @@ public class FastLeaderElection implements Election {
     /**
      * Send notifications to all peers upon a change in our vote
      * 给集群中的所有节点（包括自己）发送自己在这一轮中的投票决定
+     * 消息内容包括：消息类型（notification）、本节点提议的 Leader 人选、人选的最近的 Zxid、任期（也就是逻辑时钟 logicalclock.get()）、
+     * 当前节点的状态（LOOKING 状态）、myid(serverId 或 sid)等消息
      */
     private void sendNotifications() {
         for (long sid : self.getCurrentAndNextConfigVoters()) {
@@ -715,7 +744,7 @@ public class FastLeaderElection implements Election {
                 self.getId(),
                 Long.toHexString(proposedEpoch));
 
-            sendqueue.offer(notmsg);
+            sendqueue.offer(notmsg);//最后就是将消息加入 sendqueue 队列中
         }
     }
 
