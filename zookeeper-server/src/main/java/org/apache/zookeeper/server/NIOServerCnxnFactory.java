@@ -65,7 +65,8 @@ import org.slf4j.LoggerFactory;
 /**
  * 这是一个工厂类，内部管理着线程以及线程池
  * 线程以及线程池的规模由 ServerCnxnfactory 类的 configure() 等方法（多个重载方法）来决定，具体可以从这个方法入手来看规模是如何决定的
- *
+ * 线程池的初始化在 start() 方法中完成
+ * 线程的初始化则在 configure() 方法中完成，启动在 start() 方法中完成
  */
 public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
@@ -744,23 +745,32 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
     }
 
     /**
-     *
+     * 注意：先调用 configure() 方法，再调用 start() 方法
+     * start() 方法用于：
+     *  1. 构造指定大小的线程池 WorkerService 实例
+     *  2. 启动在 configure() 方法中构造的若干 SelectorThread 线程实例
+     *  3. 启动 AcceptThread 线程
+     *  4. 启动 ConnectionExpirerThread 线程
      */
     @Override
     public void start() {
         stopped = false;
+        //构造线程池实例，大小为 numWorkerThreads 即 max(√(CPU 核心数/2),1)
         if (workerPool == null) {
             workerPool = new WorkerService("NIOWorker", numWorkerThreads, false);
         }
+        //对在 configure() 方法中构造的若干 SelectorThread 实例通过 Thread.start() 启动
         for (SelectorThread thread : selectorThreads) {
             if (thread.getState() == Thread.State.NEW) {
                 thread.start();
             }
         }
+        //启动 AcceptThread 线程
         // ensure thread is started once and only once
         if (acceptThread.getState() == Thread.State.NEW) {
             acceptThread.start();
         }
+        //启动 ConnectionExpirerThread 线程
         if (expirerThread.getState() == Thread.State.NEW) {
             expirerThread.start();
         }
