@@ -417,6 +417,7 @@ public class FastLeaderElection implements Election {
                              */
                             //如果自己是 LOOKING 状态，代表正在进行 Leader 选举
                             if (self.getPeerState() == QuorumPeer.ServerState.LOOKING) {
+                                //将结合了 Message response 实例后将其封装为 Notification 实例加入到 FastLeader.recvqueue 实例中
                                 recvqueue.offer(n);
 
                                 /*
@@ -513,7 +514,7 @@ public class FastLeaderElection implements Election {
                         if (m == null) {
                             continue;
                         }
-                        process(m);
+                        process(m);//将 ToSend 消息序列化为  ByteBuffer 实例，加入 QuorumCnxManager.recvQueue 队列中
                     } catch (InterruptedException e) {
                         break;
                     }

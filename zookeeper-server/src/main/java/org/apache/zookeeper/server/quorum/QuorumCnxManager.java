@@ -174,15 +174,16 @@ public class QuorumCnxManager {
      * n-1 条异步线程 SendWorker，每一个异步线程对应一个阻塞队列 (queueSendMap的value)，每一个线程负责消费阻塞队列上的消息
      * n-1 条异步线程 RecvWorker，所有异步异步线程仅仅对应一个阻塞队列 recvQueue，一起负责向此队列添加元素
      * n-1 个阻塞队列(ConcurrentHashMap<Long, BlockingQueue<ByteBuffer>> queueSendMap 的 value)，用于存储待发送的消息（每一个异步线程一个）
-     * n-1 个 ByteBuffer 用于存储发给其余参与竞选节点的最后一个消息
-     * 1   个阻塞队列 BlockingQueue<Message>，用于存储当前主机接收到的消息（这与发送相比截然不同，不管集群中哪一个节点发来的消息，都统一集中存放在一个队列中）
+     * n-1 个 ByteBuffer 用于存储发给其余参与竞选节点的最后一个消息(存储于 lastMessageSent 字段中)
+     * 1   个阻塞队列 BlockingQueue<Message> recvQueue，用于存储当前主机接收到的消息（这与发送相比截然不同，不管集群中哪一个节点发来的消息，都统一集中存放在一个队列中）
      * 我们通过 myid，即 serverId 来进行映射，找到当前主机与某一个参与竞选的其他节点的：异步线程、阻塞队列、最后一个消息。
      * 注意事项：并没有由 RecvWorker 作为键值组成的 Map，这是因为 SendWorker 与 RecvWorker 总是一一对应，我们通过
      * myid 来查找 SendWorker 实例，再通过其类内部的 `RecvWorker recvWorker;` 字段来找到 RecvWorker 实例的引用
      */
     final ConcurrentHashMap<Long, SendWorker> senderWorkerMap;// 每台服务器对应的 SendWorker(Worker 为一个异步线程)
     final ConcurrentHashMap<Long, BlockingQueue<ByteBuffer>> queueSendMap;// 需要发送给各个服务器的消息队列
-    final ConcurrentHashMap<Long, ByteBuffer> lastMessageSent;// 发送给每台服务器最近的消息
+    // 发送给每台服务器最近的消息，我猜测这是 ZooKeeper 用于在应用层保持心跳包，因为在 LeaderElection 过程中重复发送同一数据是没有意义的，只有心跳作用
+    final ConcurrentHashMap<Long, ByteBuffer> lastMessageSent;
 
 
     /*
@@ -1248,10 +1249,17 @@ public class QuorumCnxManager {
          *
          * @return RecvWorker
          */
+
         synchronized RecvWorker getRecvWorker() {
             return recvWorker;
         }
 
+        /**
+         * 释放相关资源，包括:
+         * - Socket
+         * - 线程资源：SendWorker 以及 RecvWorker
+         * @return
+         */
         synchronized boolean finish() {
             LOG.debug("Calling SendWorker.finish for {}", sid);
             //防止关闭两次
@@ -1277,6 +1285,12 @@ public class QuorumCnxManager {
             return running;//返回关闭的结果
         }
 
+        /**
+         * 这个方法是 JDK Socket 阻塞式的数据发送
+         * 不过借用了 NIO 中的 ByteBuffer 作为序列化字节数据当做存储容器，不要被误导了
+         * @param b
+         * @throws IOException
+         */
         synchronized void send(ByteBuffer b) throws IOException {
             byte[] msgBytes = new byte[b.capacity()];
             try {
@@ -1291,9 +1305,12 @@ public class QuorumCnxManager {
             dout.flush();
         }
 
+        /**
+         * 下面是 QuorumCnxManager.SendWorker 线程内部的工作逻辑
+         */
         @Override
         public void run() {
-            threadCnt.incrementAndGet();
+            threadCnt.incrementAndGet();//计数器自加一下
             try {
                 /**
                  * If there is nothing in the queue to send, then we
@@ -1308,9 +1325,12 @@ public class QuorumCnxManager {
                  * message than that stored in lastMessage. To avoid sending
                  * stale message, we should send the message in the send queue.
                  */
+                //根据服务器的 myid 取出 SendWorker 对应的阻塞队列，如果为空说明还没有注册，或者被删除了
                 BlockingQueue<ByteBuffer> bq = queueSendMap.get(sid);
+                //如果 bq（阻塞队列）为空或者 bq 内没有任何待发送的元素，那么就从 lastMessageSent 队列中取出一个 ByteBuffer 元素
                 if (bq == null || isSendQueueEmpty(bq)) {
                     ByteBuffer b = lastMessageSent.get(sid);
+                    //如果 ByteBuffer 不为空，那么发送，否则不做任何事
                     if (b != null) {
                         LOG.debug("Attempting to send lastMessage to sid={}", sid);
                         send(b);
@@ -1323,20 +1343,35 @@ public class QuorumCnxManager {
             LOG.debug("SendWorker thread started towards {}. myId: {}", sid, QuorumCnxManager.this.mySid);
 
             try {
+                //这里是 SendWorker 的 Main Loop（与 run() 方法最开始执行逻辑不同，这里会循环执行，前者只会执行一次）
                 while (running && !shutdown && sock != null) {
 
                     ByteBuffer b = null;
                     try {
+                        //这里得到 SendWorker 对应的阻塞队列 bq
                         BlockingQueue<ByteBuffer> bq = queueSendMap.get(sid);
+                        /**
+                         * 我们可以认为超时时间主要用于控制 ZooKeeper 各台服务器之间为了 Leader 选举心跳包的发送间隔
+                         * 因此我们可以认为 ZooKeeper 集群处于稳定状态，即不需要选举，那么 ZooKeeper 集群的用于选举的 Socket 连接
+                         * 通过 1 秒作为时间间隔进行发送心跳包（之前发过的重复数据）
+                         */
+                        //在队列不为空的情况下，根据超时时间 1 秒从阻塞队列中取出元素 ByteBuffer 实例
                         if (bq != null) {
                             b = pollSendQueue(bq, 1000, TimeUnit.MILLISECONDS);
                         } else {
                             LOG.error("No queue of incoming messages for server {}", sid);
                             break;
                         }
-
+                        //如果取出的 ByteBuffer 还是空，那么从 lastMessageSent 中取出一个 ByteBuffer
+                        /**
+                         * 那么继续为空怎么办？
+                         * 实际上不会，因为 ZooKeeper 集群中的节点在启动之初的第一件事就是发送选举用的投票消息
+                         * 因此早在一开始 lastMessageSent 就有元素的。
+                         * 而阻塞队列中的元素一旦被被消费掉，就不存在了，因此可能遇到取出元素返回 null 的情况
+                         */
                         if (b != null) {
                             lastMessageSent.put(sid, b);
+                            //通过 JDK NIO 发送序列化了的消息
                             send(b);
                         }
                     } catch (InterruptedException e) {
@@ -1350,6 +1385,7 @@ public class QuorumCnxManager {
                     QuorumCnxManager.this.mySid,
                     e);
             }
+            //如果发送异常，while 循环会终止，那么会调用此方法来完成相关资源的释放
             this.finish();
 
             LOG.warn("Send worker leaving thread id {} my id = {}", sid, self.getId());
@@ -1439,15 +1475,16 @@ public class QuorumCnxManager {
 
         @Override
         public void run() {
-            threadCnt.incrementAndGet();
+            threadCnt.incrementAndGet();//自加
             try {
                 LOG.debug("RecvWorker thread towards {} started. myId: {}", sid, QuorumCnxManager.this.mySid);
+                //这里是 RecvWorker 的 Main Loop
                 while (running && !shutdown && sock != null) {
                     /**
                      * Reads the first int to determine the length of the
                      * message
                      */
-                    int length = din.readInt();
+                    int length = din.readInt();//得到消息的字节长度
                     if (length <= 0 || length > PACKETMAXSIZE) {
                         throw new IOException("Received packet with invalid packet: " + length);
                     }
@@ -1455,7 +1492,9 @@ public class QuorumCnxManager {
                      * Allocates a new ByteBuffer to receive the message
                      */
                     final byte[] msgArray = new byte[length];
+                    //因为 ZooKeeper 的 LeaderElection 过程采用的是非 NIO 而是 JDK Sockset 实现，因此在没有数据时此方法会阻塞
                     din.readFully(msgArray, 0, length);
+                    //将读到的消息封装为 Message 实例加入 QuorumCnxManager.recvQueue 队列中
                     addToRecvQueue(new Message(ByteBuffer.wrap(msgArray), sid));
                 }
             } catch (Exception e) {
