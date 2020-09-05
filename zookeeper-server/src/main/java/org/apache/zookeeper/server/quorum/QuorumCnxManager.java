@@ -171,9 +171,9 @@ public class QuorumCnxManager {
     /**
      * Mapping from Peer to Thread number
      * 下面的若干字段是 QuorumCnxManager 类的核心，假设集群中有 n 个节点参与 Leader Election，那么其维护了如下实例：
-     * n-1 条异步线程 SendWorker，每一个异步线程对应一个阻塞队列 queueSendMap，每一个线程负责消费阻塞队列上的消息
+     * n-1 条异步线程 SendWorker，每一个异步线程对应一个阻塞队列 (queueSendMap的value)，每一个线程负责消费阻塞队列上的消息
      * n-1 条异步线程 RecvWorker，所有异步异步线程仅仅对应一个阻塞队列 recvQueue，一起负责向此队列添加元素
-     * n-1 个阻塞队列 BlockingQueue<ByteBuffer> queueSendMap，用于存储待发送的消息（每一个异步线程一个）
+     * n-1 个阻塞队列(ConcurrentHashMap<Long, BlockingQueue<ByteBuffer>> queueSendMap 的 value)，用于存储待发送的消息（每一个异步线程一个）
      * n-1 个 ByteBuffer 用于存储发给其余参与竞选节点的最后一个消息
      * 1   个阻塞队列 BlockingQueue<Message>，用于存储当前主机接收到的消息（这与发送相比截然不同，不管集群中哪一个节点发来的消息，都统一集中存放在一个队列中）
      * 我们通过 myid，即 serverId 来进行映射，找到当前主机与某一个参与竞选的其他节点的：异步线程、阻塞队列、最后一个消息。
