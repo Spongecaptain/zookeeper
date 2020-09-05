@@ -202,8 +202,8 @@ public class FastLeaderElection implements Election {
 
     }
 
-    LinkedBlockingQueue<ToSend> sendqueue;
-    LinkedBlockingQueue<Notification> recvqueue;
+    LinkedBlockingQueue<ToSend> sendqueue;//存储发送给其余节点的消息（ToSend 实例）的队列
+    LinkedBlockingQueue<Notification> recvqueue;//存储接收其余节点发送来通知（Notification 实例）的队列
 
     /**
      * Multi-threaded implementation of message handler. Messenger
