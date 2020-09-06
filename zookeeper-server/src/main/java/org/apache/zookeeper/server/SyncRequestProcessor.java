@@ -49,6 +49,10 @@ import org.slf4j.LoggerFactory;
  *             be null. This change the semantic of txnlog on the observer
  *             since it only contains committed txns.
  */
+
+/**
+ * 这个处理器主要完成一些持久化的操作 直接移步其 run() 方法
+ */
 public class SyncRequestProcessor extends ZooKeeperCriticalThread implements RequestProcessor {
 
     private static final Logger LOG = LoggerFactory.getLogger(SyncRequestProcessor.class);
@@ -164,9 +168,12 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
 
                 long pollTime = Math.min(zks.getMaxWriteQueuePollTime(), getRemainingDelay());
                 Request si = queuedRequests.poll(pollTime, TimeUnit.MILLISECONDS);
+                //如果此次请求 Request 为空
                 if (si == null) {
                     /* We timed out looking for more writes to batch, go ahead and flush immediately */
+                    //将 toFlush 队列中的 Request 持久化到磁盘
                     flush();
+                    //从队列中取出一个请求，在队列为空时阻塞
                     si = queuedRequests.take();
                 }
 
@@ -178,15 +185,23 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 ServerMetrics.getMetrics().SYNC_PROCESSOR_QUEUE_TIME.add(startProcessTime - si.syncQueueStartTime);
 
                 // track the number of records written to the log
+                /** 首先是通过 ZKDatabase.append(Request request) 来持久化数据
+                 *  下面还有一个 flush() 方法 同样都是持久化，append 与 flush() 方法有什么区别呢？
+                 *  ZooKeeper 为了确保每一个日志文件不会非常大，需要在日志文件拥有的日志数量达到一定量后重新创建一个日志文件
+                 *  append 用于向一个日志文件追加数据，flush 支持创建一个新的日志文件，然后写入日志
+                 */
+
                 if (!si.isThrottled() && zks.getZKDatabase().append(si)) {
+                    //通过判断此方法是否要将内存持久化为快照文件
                     if (shouldSnapshot()) {
                         resetSnapshotStats();
                         // roll the log
-                        zks.getZKDatabase().rollLog();
+                        zks.getZKDatabase().rollLog();//滚动一下日志
                         // take a snapshot
                         if (!snapThreadMutex.tryAcquire()) {
                             LOG.warn("Too busy to snap, skipping");
                         } else {
+                            //这里是启动一个异步线程来完成内存快照（DataTree 实例），但在 run() 方法的循环中不一定每一轮都执行一次
                             new ZooKeeperThread("Snapshot Thread") {
                                 public void run() {
                                     try {
@@ -212,9 +227,11 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                     }
                     continue;
                 }
+                //将请求写入到 toFlush 队列中
                 toFlush.add(si);
+                //检查是否要持久化请求
                 if (shouldFlush()) {
-                    flush();
+                    flush();//负责将队列中的请求持久化
                 }
                 ServerMetrics.getMetrics().SYNC_PROCESS_TIME.add(Time.currentElapsedTime() - startProcessTime);
             }

@@ -93,6 +93,8 @@ import org.slf4j.LoggerFactory;
  * This RequestProcessor counts on ZooKeeperServer to populate the
  * outstandingRequests member of ZooKeeperServer.
  */
+
+//在三个请求处理器中，唯独 FinalRequestProcessor 不是线程，我们需要直接看其 processRequest(Request request) 方法
 public class FinalRequestProcessor implements RequestProcessor {
 
     private static final Logger LOG = LoggerFactory.getLogger(FinalRequestProcessor.class);
@@ -154,6 +156,7 @@ public class FinalRequestProcessor implements RequestProcessor {
         }
         ProcessTxnResult rc = null;
         if (!request.isThrottled()) {
+            //这里将写操作作用于内存
           rc = applyRequest(request);
         }
         if (request.cnxn == null) {
@@ -209,6 +212,7 @@ public class FinalRequestProcessor implements RequestProcessor {
 
             AuditHelper.addAuditLog(request, rc);
 
+            //这里通过判断请求的类型来决定完成何种操作（写操作、读操作）以及创建何种响应 Response
             switch (request.type) {
             case OpCode.ping: {
                 lastOp = "PING";
@@ -295,6 +299,7 @@ public class FinalRequestProcessor implements RequestProcessor {
                 }
                 break;
             }
+            //如果是 create 操作，那么就创建一个 Response，而 Response 发送则是也是通过队列与异步线程来完成，详见此方法末尾
             case OpCode.create: {
                 lastOp = "CREA";
                 rsp = new CreateResponse(rc.path);
@@ -600,6 +605,7 @@ public class FinalRequestProcessor implements RequestProcessor {
 
         try {
             if (path == null || rsp == null) {
+                //发送此响应，通过 NIO 机制的 ServerCnx 来异步发送
                 responseSize = cnxn.sendResponse(hdr, rsp, "response");
             } else {
                 int opCode = request.type;

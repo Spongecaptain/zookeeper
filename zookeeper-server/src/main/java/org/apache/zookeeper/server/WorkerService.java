@@ -122,8 +122,8 @@ public class WorkerService {
             try {
                 // make sure to map negative ids as well to [0, size-1]
                 int workerNum = ((int) (id % size) + size) % size;//用于负载均衡，确保线程池中的线程均匀地处理 IO 事件
-                ExecutorService worker = workers.get(workerNum);//得到一个线程
-                worker.execute(scheduledWorkRequest);//线程来处理此 IO 事件
+                ExecutorService worker = workers.get(workerNum);//得到一个线程(池)，默认情况下就是 ThreadPoolExecutor 线程池
+                worker.execute(scheduledWorkRequest);//线程池异步处理此 IO 事件
             } catch (RejectedExecutionException e) {
                 LOG.warn("ExecutorService rejected execution", e);
                 workRequest.cleanup();

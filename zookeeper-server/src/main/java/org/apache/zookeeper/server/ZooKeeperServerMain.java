@@ -164,8 +164,10 @@ public class ZooKeeperServerMain {
                 needStartZKServer = false;
             }
             if (config.getSecureClientPortAddress() != null) {
+                //这里首先构造一个 ServerCnxnFactory 工厂类实例
                 secureCnxnFactory = ServerCnxnFactory.createFactory();
                 secureCnxnFactory.configure(config.getSecureClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), true);
+                //这里主要初始化一个 ZooKeeperServer 实例，并与工厂类绑定
                 secureCnxnFactory.startup(zkServer, needStartZKServer);
             }
 

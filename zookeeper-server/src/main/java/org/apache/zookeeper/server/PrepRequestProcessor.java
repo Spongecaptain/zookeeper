@@ -137,10 +137,12 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         try {
             while (true) {
                 ServerMetrics.getMetrics().PREP_PROCESSOR_QUEUE_SIZE.add(submittedRequests.size());
+                //从阻塞队列中取出一个 Request 元素
                 Request request = submittedRequests.take();
                 ServerMetrics.getMetrics().PREP_PROCESSOR_QUEUE_TIME
                     .add(Time.currentElapsedTime() - request.prepQueueStartTime);
                 long traceMask = ZooTrace.CLIENT_REQUEST_TRACE_MASK;
+                //判断请求是否为 ping 请求
                 if (request.type == OpCode.ping) {
                     traceMask = ZooTrace.CLIENT_PING_TRACE_MASK;
                 }
@@ -152,6 +154,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                 }
 
                 request.prepStartTime = Time.currentElapsedTime();
+                //此方法是 PrepRequestProcessor 处理请求的主要逻辑
                 pRequest(request);
             }
         } catch (Exception e) {
@@ -664,6 +667,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             data = createTtlRequest.getData();
             ttl = createTtlRequest.getTtl();
         } else {
+            //得到请求中各种标志位对应字段的语义
             CreateRequest createRequest = (CreateRequest) record;
             flags = createRequest.getFlags();
             path = createRequest.getPath();
@@ -671,15 +675,19 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             data = createRequest.getData();
             ttl = -1;
         }
+        //得到节点创建的模式
         CreateMode createMode = CreateMode.fromFlag(flags);
         validateCreateRequest(path, createMode, request, ttl);
+        //取上一级的目录
         String parentPath = validatePathForCreate(path, request.sessionId);
-
+        //得到 ACL 信息
         List<ACL> listACL = fixupACL(path, request.authInfo, acl);
         ChangeRecord parentRecord = getRecordForPath(parentPath);
-
+        //检查 ACL
         zks.checkACL(request.cnxn, parentRecord.acl, ZooDefs.Perms.CREATE, request.authInfo, path, listACL);
+        //得到父节点的 CVersion
         int parentCVersion = parentRecord.stat.getCversion();
+        //如果是顺序节点
         if (createMode.isSequential()) {
             path = path + String.format(Locale.ENGLISH, "%010d", parentCVersion);
         }
@@ -691,11 +699,15 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         } catch (KeeperException.NoNodeException e) {
             // ignore this one
         }
+        //如果父节点是临时节点
         boolean ephemeralParent = EphemeralType.get(parentRecord.stat.getEphemeralOwner()) == EphemeralType.NORMAL;
+        //父节点是临时节点不能创建子节点，这里会跑出一个异常
         if (ephemeralParent) {
             throw new KeeperException.NoChildrenForEphemeralsException(path);
         }
+        // cVersion 自加，我们基于 cVersion 来创建新节点
         int newCversion = parentRecord.stat.getCversion() + 1;
+        // 注意，这里设置了 Request 的 txn 字段，其对应于事务，第二个处理器 SyncRequestProcessor 在其 run 方法中消费请求时，需要这个字段来完成持久化
         if (type == OpCode.createContainer) {
             request.setTxn(new CreateContainerTxn(path, data, listACL, newCversion));
         } else if (type == OpCode.createTTL) {
@@ -714,6 +726,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             ephemeralOwner = request.sessionId;
         }
         StatPersisted s = DataTree.createStat(hdr.getZxid(), hdr.getTime(), ephemeralOwner);
+        //父：创建并添加修改记录（还是加入到队列中，被异步队列消费）
         parentRecord = parentRecord.duplicate(request.getHdr().getZxid());
         parentRecord.childCount++;
         parentRecord.stat.setCversion(newCversion);
@@ -721,6 +734,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         parentRecord.precalculatedDigest = precalculateDigest(
                 DigestOpCode.UPDATE, parentPath, parentRecord.data, parentRecord.stat);
         addChangeRecord(parentRecord);
+        //子：创建并添加修改记录（还是加入到队列中，被异步队列消费）
         ChangeRecord nodeRecord = new ChangeRecord(
                 request.getHdr().getZxid(), path, s, 0, listACL);
         nodeRecord.data = data;
@@ -765,7 +779,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         // request.type + " id = 0x" + Long.toHexString(request.sessionId));
         request.setHdr(null);
         request.setTxn(null);
-
+        //首先使用 PreRequestProcessor.pRequestHelper() 方法来处理请求
         if (!request.isThrottled()) {
           pRequestHelper(request);
         }
@@ -773,6 +787,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         request.zxid = zks.getZxid();
         long timeFinishedPrepare = Time.currentElapsedTime();
         ServerMetrics.getMetrics().PREP_PROCESS_TIME.add(timeFinishedPrepare - request.prepStartTime);
+        //最后将请求加入到下一个请求处理器的队列中
         nextProcessor.processRequest(request);
         ServerMetrics.getMetrics().PROPOSAL_PROCESS_TIME.add(Time.currentElapsedTime() - timeFinishedPrepare);
     }
@@ -784,6 +799,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
      */
     private void pRequestHelper(Request request) throws RequestProcessorException {
         try {
+            //通过请求的类型来决定具体采用哪一个 pRequest() 方法作用于此请求，我们就以 create 命令为例
             switch (request.type) {
             case OpCode.createContainer:
             case OpCode.create:

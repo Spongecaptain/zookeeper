@@ -91,6 +91,18 @@ import org.slf4j.LoggerFactory;
  * following chain of RequestProcessors to process requests:
  * PrepRequestProcessor -&gt; SyncRequestProcessor -&gt; FinalRequestProcessor
  */
+
+/**
+ * ZooKeeperServer 无论是在集群模式下还是在单机模式下都代表当前可以处理客户端请求的 ZooKeeper 主机
+ * 但是在启动 ZooKeeperServer 实例的顺序上有所区别：
+ * 1. 集群模式下：在选举结束后，在 Leader/Follower/Observer 实例的方法中启动,例如 Leader#lead()，Follower.followLeader()
+ * 2. 单机模式下：在构造 NIOServerCnxnfactory 过程中启动一个 ZooKeeperServer 实例
+ *
+ * ZooKeeperServer 与 ServerCnxnFactory 密不可分，前者是代表一个应用层的客户端请求处理器，后者则是一个在网络层中负责与客户端的网络通信与线程管理
+ * ZooKeeperServer 类的初始化逻辑从其 startup() 方法入手
+ *
+ * 此类向外暴露的最重要的方法就是 processPacket(ServerCnxn cnxn, ByteBuffer incomingBuffer) 用于处理请求
+ */
 public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
     protected static final Logger LOG;
@@ -661,26 +673,32 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         }
     }
 
+    /**
+     * 这是 ZooKeeperServer 初始化逻辑入口
+     */
     public synchronized void startup() {
+        //1. 创建并启动 SessionTracker 实例
         if (sessionTracker == null) {
             createSessionTracker();
         }
         startSessionTracker();
+        //2. 设置一个 RequestProcessor 链（因此带有 s）
         setupRequestProcessors();
-
+        //3. 启动一个 startRequestThrottler
         startRequestThrottler();
-
+        //4. 注册 JMX
         registerJMX();
-
+        //5. 开始 JVM 监控器
         startJvmPauseMonitor();
-
+        //6. 注册 Metrics
         registerMetrics();
-
+        //7. 设置状态
         setState(State.RUNNING);
-
+        //8. 启动 RequestPathMetricsCollector 实例
         requestPathMetricsCollector.start();
-
+        //9. 启动 localSession
         localSessionEnabled = sessionTracker.isLocalSessionsEnabled();
+        //10. 唤醒其他阻塞着的线程（阻塞于 ZooKeeper.wait() 方法（实际上我并没有找到调用此方法的例子））
         notifyAll();
     }
 
@@ -696,6 +714,11 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
     }
 
+    /**
+     * setupRequestProcessors() 用于初始化 ZooKeeper 内部的请求处理器链
+     * 顺序依次为：
+     * PrepRequestProcessor、SyncRequestProcessor、FinalRequestProcessor
+     */
     protected void setupRequestProcessors() {
         RequestProcessor finalProcessor = new FinalRequestProcessor(this);
         RequestProcessor syncProcessor = new SyncRequestProcessor(this, finalProcessor);
@@ -1091,6 +1114,10 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         requestThrottler.submitRequest(si);
     }
 
+    /**
+     * 虽然这个方法叫做 submit，实际上不仅仅负责请求的提交，还负责请求的处理
+     * @param si
+     */
     public void submitRequestNow(Request si) {
         if (firstProcessor == null) {
             synchronized (this) {
@@ -1099,6 +1126,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                     // processor it should wait for setting up the request
                     // processor chain. The state will be updated to RUNNING
                     // after the setup.
+                    //这里等待主要用于给予请求链初始化操作一定时间
                     while (state == State.INITIAL) {
                         wait(1000);
                     }
@@ -1112,12 +1140,19 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         }
         try {
             touch(si.cnxn);
+            //这里先进行 Request 有效性的判断，主要是请求对应的命令是否是合法，例如 create、get 等命令是合理合法的
             boolean validpacket = Request.isValid(si.type);
             if (validpacket) {
                 setLocalSessionFlag(si);
+                //实际上这里开始链式调用，每一个 Processor 都是一个线程，因此准确说是基于队列的异步链式调用
+                /**
+                 * 首先，当前线程将此请求加入到第一个处理器的阻塞队列中
+                 * 其次，处理器的作为异步线程在其 run() 方法中消费此请求
+                 * 最后，请求处理完毕后加入到后续处理器的阻塞队列中，后续处理器会以类似的异步逻辑处理请求
+                 */
                 firstProcessor.processRequest(si);
                 if (si.cnxn != null) {
-                    incInProcess();
+                    incInProcess();//自增（其用于表示当前正在处理的请求数）
                 }
             } else {
                 LOG.warn("Received packet at server of unknown type {}", si.type);
@@ -1546,10 +1581,17 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         }
     }
 
+    /**
+     * 这是 ZooKeeperServer 实例向外暴露最重要的方法之一，用于接收来自传输层的字节数据
+     * @param cnxn 封装了请求对应的 TCP 连接
+     * @param incomingBuffer 请求对应的字节数据
+     * @throws IOException
+     */
     public void processPacket(ServerCnxn cnxn, ByteBuffer incomingBuffer) throws IOException {
         // We have the request, now process and setup for next
         InputStream bais = new ByteBufferInputStream(incomingBuffer);
         BinaryInputArchive bia = BinaryInputArchive.getArchive(bais);
+        //创建请求头，并利用请求字节数据反序列化来初始化请求头
         RequestHeader h = new RequestHeader();
         h.deserialize(bia, "header");
 
@@ -1567,6 +1609,9 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         // Through the magic of byte buffers, txn will not be
         // pointing
         // to the start of the txn
+        /**
+         * 下面的逻辑主要是根据 Header 的不同类型来进行处理
+         */
         incomingBuffer = incomingBuffer.slice();
         if (h.getType() == OpCode.auth) {
             LOG.info("got auth packet {}", cnxn.getRemoteSocketAddress());
@@ -1617,7 +1662,8 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                 cnxn.sendResponse(replyHeader, null, "response");
                 cnxn.sendCloseSession();
                 cnxn.disableRecv();
-            } else {
+            } else {//这是大部分请求会走的逻辑，例如 ls get create (你可以选择在这里打一个断点来验证)
+                //这里把一系列字段注入到 Request 实例中
                 Request si = new Request(cnxn, cnxn.getSessionId(), h.getXid(), h.getType(), incomingBuffer, cnxn.getAuthInfo());
                 int length = incomingBuffer.limit();
                 if (isLargeRequest(length)) {
@@ -1626,6 +1672,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                     si.setLargeRequestSize(length);
                 }
                 si.setOwner(ServerCnxn.me);
+                //提交请求：实际上还是将请求放到一个队列中，这里的队列为 RequestThrottler.submittedRequests 队列
                 submitRequest(si);
             }
         }

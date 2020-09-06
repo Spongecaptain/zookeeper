@@ -181,12 +181,15 @@ public class NIOServerCnxn extends ServerCnxn {
 
         if (incomingBuffer.remaining() == 0) { // have we read length bytes?
             incomingBuffer.flip();
+            //下面的方法主要用于计数
             packetReceived(4 + incomingBuffer.remaining());
             if (!initialized) {
                 readConnectRequest();
             } else {
                 //TODO 这里是否存在线程安全问题，难道没有同一个 NIOServerCnxn 同一时刻得到多个请求的情况吗？
+                //回答：不会，这是因为此时已经将 SelectionKey 设置为对读事件不感兴趣
                 //NIOServerCnxn#readRequest() 方法负责将读到的字节数据进行反序列化（不过）为一个客户端请求
+                //然后进一步进行处理
                 readRequest();
             }
             lenBuffer.clear();
@@ -345,6 +348,7 @@ public class NIOServerCnxn extends ServerCnxn {
                         isPayload = true;
                     }
                     if (isPayload) { // not the case for 4letterword
+                        //这个方法是将字节数据接收，然后一步一步反序列化，最终处理的入口
                         readPayload();
                     } else {
                         // four letter words take care
@@ -385,6 +389,7 @@ public class NIOServerCnxn extends ServerCnxn {
     }
 
     private void readRequest() throws IOException {
+        //可见 NIOServerCnxn 作为传输层的实例，在得到一个请求的字节数据后，最终要将请求数据交给应用层的 ZooKeeperServer 实例来处理
         zkServer.processPacket(this, incomingBuffer);
     }
 

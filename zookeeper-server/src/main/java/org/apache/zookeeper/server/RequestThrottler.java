@@ -57,6 +57,12 @@ import org.slf4j.LoggerFactory;
  * that connection is closed and flagged as invalid. All subsequent requests
  * inflight from that connection are then dropped as well.
  */
+
+/**
+ * RequestThrottler 是一个线程类，最本质，也是最基础的功能就是消费其内部队列 submittedRequests 上的 Request 元素
+ * 其通过暴露 submitRequest(Request request) 方法来提供其他异步线程向其内部队列中添加元素
+ * 其 run() 方法作为 Main Loop 则负责消费队列上的 Request 元素
+ */
 public class RequestThrottler extends ZooKeeperCriticalThread {
 
     private static final Logger LOG = LoggerFactory.getLogger(RequestThrottler.class);
@@ -135,7 +141,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
     public static void setDropStaleRequests(boolean drop) {
         dropStaleRequests = drop;
     }
-
+    //RequestThrottler 的 Main Loop
     @Override
     public void run() {
         try {
@@ -143,7 +149,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                 if (killed) {
                     break;
                 }
-
+                //从队列中取走一个元素，注意：从这个队列中取元素是没有超时等待时间的
                 Request request = submittedRequests.take();
                 if (Request.requestOfDeath == request) {
                     break;
@@ -154,6 +160,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                 }
 
                 // Throttling is disabled when maxRequests = 0
+                //对于废弃请求、连接中断等的判断与处理
                 if (maxRequests > 0) {
                     while (!killed) {
                         if (dropStaleRequests && request.isStale()) {
@@ -185,6 +192,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                       request.setIsThrottled(true);
                       ServerMetrics.getMetrics().THROTTLED_OPS.add(1);
                     }
+                    //不管怎么样，如果一切顺利，那么会到达这里，用于进一步处理请求
                     zks.submitRequestNow(request);
                 }
             }
@@ -245,7 +253,8 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
             dropRequest(request);
         } else {
             request.requestThrottleQueueTime = Time.currentElapsedTime();
-            submittedRequests.add(request);
+            //将请求加入到 RequestThrottler.submittedRequests 阻塞队列中
+                submittedRequests.add(request);
         }
     }
 

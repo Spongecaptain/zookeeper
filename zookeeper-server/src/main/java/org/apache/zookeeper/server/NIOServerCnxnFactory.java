@@ -167,6 +167,12 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
     /**
      * AcceptThead 没有重写 start() 方法，因此直接查看其 run() 方法即可，其 run() 方法的主要执行逻辑如下：
+     * - 通过 Selector.select() 方法来查询是否有事件发生，在没有事件发生时阻塞，否则进行事件处理
+     * - 非阻塞下判断 Selector 实例内部产生的事件类型，其仅仅处理新连接事件，对应 SelectionKey.isAcceptable() 方法返回 true
+     * - 判断当前 ZooKeeper 服务端是否达到最大客户端连接数，如果有达到，那么拒绝新连接，否则接收新的客户端连接
+     * - 将新连接对应的 SocketChannel 实例配置为非阻塞模式
+     * - 从注册的 SelectorThread 中取出一个线程，通过 selectorThread.addAcceptedConnection(sc) 方法来使当前线程负责新连接（SocketChannel 的通信）
+     * - 实际上，上述方法的内部执行逻辑是将 SocketChannel 加入到被选择的 SelectorThread 实例的队列中，等待 SelectorThread 来消费(负责其 I/O 逻辑)
      * -
      */
     private class AcceptThread extends AbstractSelectThread {
@@ -185,7 +191,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             this.selectorThreads = Collections.unmodifiableList(new ArrayList<SelectorThread>(selectorThreads));
             selectorIterator = this.selectorThreads.iterator();
         }
-
+        //run() 方法的具体执行逻辑可以看 AcceptThread 类上的注释
         public void run() {
             try {
                 //AcceptThread 类的 Main Loop
@@ -299,6 +305,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                 }
                 //从迭代器中取出一个 selectorThread 实例来负责此 SocketChannel 的通信
                 SelectorThread selectorThread = selectorIterator.next();
+                //将新连接对应的 SocketChannel 实例加入到 SelectorThread 内部的队列中
                 if (!selectorThread.addAcceptedConnection(sc)) {
                     throw new IOException("Unable to add connection to selector queue"
                                           + (stopped ? " (shutdown in progress)" : ""));
@@ -340,7 +347,28 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
     /**
      * SelectorThread 线程也没有重写 Thread.start() 方法，因此其运行逻辑集中于 run() 方法上
      * SelectorThread.run() 方法的运行逻辑如下：
-     * -
+     * 1.第一部分工作是对 Selector 事件的处理
+     * - 通过 `Selector.select()` 方法来查询是否有事件发生，在没有事件发生时阻塞，否则进行事件处理；
+     * - 非阻塞下判断 Selector 实例内部产生的事件类型，其仅仅处理可读、可写事件，
+     * 对应 `SelectionKey.isWritable()` 或者 `SelectionKey.isReadable()` 方法返回 true；
+     * - 在可读可写事件发生后，进行 IO 逻辑的处理，IO 处理的步骤是：
+     *   - 得到 SelectionKey 上作为附件存储的 NIOServerCnxn 实例
+     *   - 将此读写 IO 事件对应的 SelectionKey 包装为一个 IOWorkRequest 实例，封装的主要意义在于 IOWorkRequest 可以被线程池处理
+     *   - 在 IO 时将 SelectionKey 设置为对任何事件都不感兴趣，通过 `SelectionKey.interestOps(0)` 实现
+     *   - 更新一下 NIOServerCnxn 实例的过期时间（每一个 NIOServerCnxn 有被 NIOServerCnxnFactory.cnxnExpiryQueue 阻塞队列存储）
+     *   - 将封装结果 IOWorkRequest 实例交给线程池 NIOServerCnxnFactory.workerPool 来负责处理（也是异步的队列与线程）
+     * 2.第二部分工作是对新注册的 SocketChannel 构造一个 NIOServerCnxn 实例与之匹配，并注册到 Selector 中
+     * - 将从 AcceptThread 线程分配而来的 SocketChannel 实例（已存储于当前 SelectorThread 实例的 acceptedQueue 队列中）
+     *   它们虽然已分配，但是还未注册到 当前 SelectorThread 实例的 Selector 实例中，这里进行注册
+     *   注册的逻辑是：
+     *      - 将 SocketChannel 实例注册到 Selector 中，并表示对可读事件感兴趣
+     *      - 构造 NIOServerCnxn 实例，其接受 SocketChannel、SelectionKey 以及 SelectorThread 实例
+     *      - 将 NIOServerCnxn 实例作为 SelectionKey 的附件，方便在产生可读事件时方便地获取到其一一对应的 NIOServerCnxn 实例
+     *      - 注册 NIOServerCnxn 实例
+     * 3.第三部分工作是对第一步中因为处理 IO 而暂停事件的 SocketChanenl 重新恢复为原来的兴趣
+     *  能够恢复原兴趣的原因在于我们用 NIOServerCnxn 实例保留了原 SocketChanenl 的兴趣字段
+     *
+     *
      */
     class SelectorThread extends AbstractSelectThread {
 
@@ -394,10 +422,13 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                 while (!stopped) {
                     try {
                         //注意：虽然 SelectorThread 与 AcceptThread 类都由 select() 方法，但它们的执行逻辑不同
+                        //第一部分工作
                         select();
-                        //负责接收来自 AcceptThread 实例写入 acceptedQueue 队列中的 SocketChannel 实例，，
+                        //第二部分工作，ZooKeeper 官方注释说的很明白，其任务是：
+                        //将从 AcceptThread 线程分配而来的 SocketChannel 实例（已存储于当前 SelectorThread 实例的 acceptedQueue 队列中）
+                        //它们虽然已分配，但是还未注册到 当前 SelectorThread 实例的 Selector 实例中，这里进行注册
                         processAcceptedConnections();
-                        //重新开始哪些可以进行 Select 的 SelectionKey
+                        //第三部分工作是对第一步中因为处理 IO 而暂停事件的 SocketChanenl 重新设置为对读事件感兴趣
                         processInterestOpsUpdateRequests();
                     } catch (RuntimeException e) {
                         LOG.warn("Ignoring unexpected runtime exception", e);
@@ -435,7 +466,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                 selector.select();
                 Set<SelectionKey> selected = selector.selectedKeys();
                 ArrayList<SelectionKey> selectedList = new ArrayList<SelectionKey>(selected);
-                //这里重排序 Selector 的顺序
+                //这里重排序 SelectionKey 的顺序
                 Collections.shuffle(selectedList);
                 Iterator<SelectionKey> selectedKeys = selectedList.iterator();
                 while (!stopped && selectedKeys.hasNext()) {
@@ -463,14 +494,16 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
          * the given SelectionKey. If a worker thread pool is not being used,
          * I/O is run directly by this thread.
          */
-        private void handleIO(SelectionKey key) {
+        private void  handleIO(SelectionKey key) {
             //将此读写 IO 事件对应的 SelectionKey 包装为一个 IOWorkRequest 实例，封装的主要意义在于 IOWorkRequest 可以被线程池处理
             IOWorkRequest workRequest = new IOWorkRequest(this, key);
+            //得到 SelectionKey 上作为附件存储的 NIOServerCnxn 实例
             NIOServerCnxn cnxn = (NIOServerCnxn) key.attachment();
 
             // Stop selecting this key while processing on its
             // connection
             cnxn.disableSelectable();
+            //将 SelectionKey 设置为对任何事件都不感兴趣
             key.interestOps(0);
             //更新一下连接的过期时间
             touchCnxn(cnxn);
@@ -582,6 +615,16 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
      * This thread is responsible for closing stale connections so that
      * connections on which no session is established are properly expired.
      */
+
+    /**
+     * ConnectionExpirerThread 线程同样没有没有重写 start() 方法，因此直接分析 run() 方法即可
+     * 其用于关闭哪些 Session 已经过期了的连接
+     * 注意，在 SelectorThread 线程中，每次有收到新的读事件，都会更新 cnxnExpiryQueue 队列中对应 ServerCnxn 实例的过期时间
+     * 其执行逻辑为：
+     * - 得到队列中所有元素的最短过期时间
+     * - 如果最短过期时间未到，那么线程按照相应的截止时间进行线程休眠
+     * - 线程阻塞后利用 poll() 方法拿到已经过期的 NIOServerCnxn 实例，然后进行关闭
+     */
     private class ConnectionExpirerThread extends ZooKeeperThread {
 
         ConnectionExpirerThread() {
@@ -591,11 +634,14 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         public void run() {
             try {
                 while (!stopped) {
+                    //得到队列中所有元素的最短过期时间
                     long waitTime = cnxnExpiryQueue.getWaitTime();
+                    //如果最短过期时间未到，那么线程按照相应的截止时间进行休眠
                     if (waitTime > 0) {
                         Thread.sleep(waitTime);
                         continue;
                     }
+                    //注意这个 poll() 只会拿到已经过期的 NIOServerCnxn 实例，然后进行关闭
                     for (NIOServerCnxn conn : cnxnExpiryQueue.poll()) {
                         ServerMetrics.getMetrics().SESSIONLESS_CONNECTIONS_EXPIRED.add(1);
                         conn.close(ServerCnxn.DisconnectReason.CONNECTION_EXPIRED);
@@ -798,10 +844,13 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
     @Override
     public void startup(ZooKeeperServer zks, boolean startServer) throws IOException, InterruptedException {
+        //1. 启动 NIOServerCnxnFactory 实例
         start();
         setZooKeeperServer(zks);
         if (startServer) {
+            //启动持久化逻辑
             zks.startdata();
+            //启动 ZooKeeperServer
             zks.startup();
         }
     }

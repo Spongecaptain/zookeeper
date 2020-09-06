@@ -1507,6 +1507,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                 case FOLLOWING:
                     try {
                         LOG.info("FOLLOWING");
+                        //TODO setFollower 是一个关键的方法，用于设置 ZooKeeperServer 的具体类型
                         setFollower(makeFollower(logFactory));
                         follower.followLeader();
                     } catch (Exception e) {
