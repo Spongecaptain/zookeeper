@@ -9,7 +9,7 @@
 
 本项目基于 ZooKeeper release-3.6.1，使用 release 版本更稳定~
 
-请使用 JDK1.8 u211以及更高版本进行编译（更高的 JDK 版本是否能编译没有测试过）。
+请使用 JDK1.8 u211以及更高版本进行编译。
 
 ## 2. 项目依赖惯例
 
@@ -330,4 +330,14 @@ echo '1'  >  /usr/local/zkclusterdata/1/myid
 ## 5. 如何阅读 ZooKeeper 源码？
 
 从 ZooKeeperMain（客户端）、QuorumPeerMain（集群模式服务端）、ZooKeeperServerMain（单机模式服务端）作为入手来学习 ZooKeeper 源码是一个不错的选择。
+
+你可以参考我个人博客上 tag 为 ZooKeeper 的相关源码分析博客：
+
+https://spongecaptain.cool/tags/zookeeper/
+
+---
+
+最后，欢迎 star！
+
+Enjoy the Source Code !
 
