@@ -59,7 +59,7 @@ class WatcherModeManager {
     Map<Key, WatcherMode> getWatcherModes() {
         return watcherModes;
     }
-
+    //设置 Watcher 模式
     void setWatcherMode(Watcher watcher, String path, WatcherMode mode) {
         if (mode == WatcherMode.DEFAULT_WATCHER_MODE) {
             removeWatcher(watcher, path);

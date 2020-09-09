@@ -708,19 +708,22 @@ public class DataTree {
     }
 
     public byte[] getData(String path, Stat stat, Watcher watcher) throws KeeperException.NoNodeException {
-        DataNode n = nodes.get(path);
+        DataNode n = nodes.get(path);//得到 path 对应的 DataNode 节点
         byte[] data = null;
         if (n == null) {
             throw new KeeperException.NoNodeException();
         }
-        synchronized (n) {
-            n.copyStat(stat);
-            if (watcher != null) {
+        synchronized (n) {//阻塞，可见在调用此方法时，其他请求并不能修改以及查看 ZNode 的数据
+            n.copyStat(stat);//将 DataNode 节点中的 Stat 数据拷贝到入口参数 Stat 实例中
+            if (watcher != null) {//注意，这里的类型实际上是 ServerCnxn(其代表当前服务端节点与某一个客户端的 TCP 连接)
+                //我们进入 IWatchManager.addWatch(String path, Watcher watcher) 方法中，来看 Watcher 究竟是如何实现的，以实际类型 WatcherManager 为例
                 dataWatches.addWatch(path, watcher);
             }
+            //得到节点的 data 数据 byte[]
             data = n.data;
         }
         updateReadStat(path, data == null ? 0 : data.length);
+        //返回 byte[] 数据
         return data;
     }
 

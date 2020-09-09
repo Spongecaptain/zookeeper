@@ -53,7 +53,7 @@ import org.slf4j.LoggerFactory;
  * Interface to a Server connection - represents a connection from a client
  * to the server.
  */
-//ServerCnxn 类实例代表了一个 TCP 连接
+//ServerCnxn 类实例代表了客户端与当前服务端的一个 TCP 连接
 public abstract class ServerCnxn implements Stats, Watcher {
 
     // This is just an arbitrary object to represent requests issued by

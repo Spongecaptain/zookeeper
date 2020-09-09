@@ -67,6 +67,7 @@ import org.slf4j.LoggerFactory;
  * 线程以及线程池的规模由 ServerCnxnfactory 类的 configure() 等方法（多个重载方法）来决定，具体可以从这个方法入手来看规模是如何决定的
  * 线程池的初始化在 start() 方法中完成
  * 线程的初始化则在 configure() 方法中完成，启动在 start() 方法中完成
+ * 需要注意的是：不同于 Tomcat 中的 per thread per request，ZooKeeper 与客户端的连接基于 NIO，用于与客户端通信的线程数是固定的。
  */
 public class NIOServerCnxnFactory extends ServerCnxnFactory {
 

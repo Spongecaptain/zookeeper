@@ -29,6 +29,7 @@ import org.apache.yetus.audience.InterfaceAudience;
  *
  */
 //所有的 Event Handler 都应当实现此接口，所有客户端接收到的 Watcher 都应当实现此接口
+//最著名的实现类就是 ServerCnxn 类
 @InterfaceAudience.Public
 public interface Watcher {
 

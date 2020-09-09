@@ -39,14 +39,22 @@ import org.slf4j.LoggerFactory;
  * This class manages watches. It allows watches to be associated with a string
  * and removes watchers and their watches in addition to managing triggers.
  */
+
+/**
+ * WatchManager 为 ZooKeeper 服务端处理 Watch 事件的类，其负责三件事：
+ * - Watcher 的注册：能将 path 映射为 Set<Watcher>，也能将 Watcher 映射为 Set<String>，其中 String 的语义是 path
+ * - Watcher 注册的移除管理
+ * - Watcher 事件的触发（trigger）
+ */
+
 public class WatchManager implements IWatchManager {
 
     private static final Logger LOG = LoggerFactory.getLogger(WatchManager.class);
-
+    //完成 path 到 Set<Watcher> 的映射，可以注意到一个 path 下可以注册多个 Watcher，只是不能重复注册(ServerCnxn 也为 Watcher 类型)
     private final Map<String, Set<Watcher>> watchTable = new HashMap<>();
-
+    //完成 Watcher 到 Set<String>(String 含义为 path) 的映射，可以注意到，一个 Watcher 可以观察多个 path
     private final Map<Watcher, Set<String>> watch2Paths = new HashMap<>();
-
+    //用于管理 Watcher 模式的管理
     private final WatcherModeManager watcherModeManager = new WatcherModeManager();
 
     @Override
@@ -66,33 +74,35 @@ public class WatchManager implements IWatchManager {
     public boolean addWatch(String path, Watcher watcher) {
         return addWatch(path, watcher, WatcherMode.DEFAULT_WATCHER_MODE);
     }
-
+    //一路到了这里
     @Override
     public synchronized boolean addWatch(String path, Watcher watcher, WatcherMode watcherMode) {
         if (isDeadWatcher(watcher)) {
             LOG.debug("Ignoring addWatch with closed cnxn");
             return false;
         }
-
+        //利用命令中的 path 得到一个 Watcher list，如果第一次对 path 施加 watcher 机制，这里自然是 null
         Set<Watcher> list = watchTable.get(path);
         if (list == null) {
             // don't waste memory if there are few watches on a node
             // rehash when the 4th entry is added, doubling size thereafter
             // seems like a good compromise
+            //初始化大小为 4 的 HashSer<Watcher>，4 的大小是有考虑的，从尽量不浪费内存的角度
             list = new HashSet<>(4);
-            watchTable.put(path, list);
+            watchTable.put(path, list);//将 key-path:value-Set<Watcher> 键值对加入到 watchTable 实例中
         }
+        //将当前 watcher 加入到 list 中，注意，我们这里的 Watcher 实例具体类型为 ServerCnxn
         list.add(watcher);
-
+        //利用 watch2Paths 将 watcher 映射为 path，在第一次时也为空，如果为空，那么就初始化
         Set<String> paths = watch2Paths.get(watcher);
         if (paths == null) {
             // cnxns typically have many watches, so use default cap here
             paths = new HashSet<>();
             watch2Paths.put(watcher, paths);
         }
-
+        //我们继续往下看 WatcherModeManager.setWatcherMode(Watcher watcher, String path, WatcherMode mode) 方法
         watcherModeManager.setWatcherMode(watcher, path, watcherMode);
-
+        //将 path 加入到 Set<String> paths 实例中
         return paths.add(path);
     }
 

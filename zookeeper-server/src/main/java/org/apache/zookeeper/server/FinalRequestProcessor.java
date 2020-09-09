@@ -284,7 +284,9 @@ public class FinalRequestProcessor implements RequestProcessor {
                             rec = handleGetChildrenRequest(readOp.toRequestRecord(), cnxn, request.authInfo);
                             subResult = new GetChildrenResult(((GetChildrenResponse) rec).getChildren());
                             break;
+                        //我们以客户端传来的 getData 方法来学习 ZooKeeper 的 Watch 处理机制
                         case OpCode.getData:
+                            //handleGetDataRequest 方法用于处理客户端传来的 getData 方法
                             rec = handleGetDataRequest(readOp.toRequestRecord(), cnxn, request.authInfo);
                             GetDataResponse gdr = (GetDataResponse) rec;
                             subResult = new GetDataResult(gdr.getData(), gdr.getStat());
@@ -655,15 +657,30 @@ public class FinalRequestProcessor implements RequestProcessor {
     }
 
     private Record handleGetDataRequest(Record request, ServerCnxn cnxn, List<Id> authInfo) throws KeeperException, IOException {
+        //将 request 强制转换为 GetDataRequest 实例
         GetDataRequest getDataRequest = (GetDataRequest) request;
+        //得到当前 getData 方法作用的 path
         String path = getDataRequest.getPath();
+        //得到当前 path 对应的 DataNode 节点实例
         DataNode n = zks.getZKDatabase().getNode(path);
+        //如果 path 对应的 Node 不存在，那么就抛出异常
         if (n == null) {
             throw new KeeperException.NoNodeException();
         }
+        //进行 ACL 权限检查
         zks.checkACL(cnxn, zks.getZKDatabase().aclForNode(n), ZooDefs.Perms.READ, authInfo, path, null);
+        //新建一个 Stat 实例
         Stat stat = new Stat();
+        //通过 ZKDatabase 的 getData() 方法来完成数据的获取
+        /**
+         * path 为了告知 ZKDatabase getData 具体作用的路径
+         * stat 为了存储 getData 操作作用于对应节点后，节点的具体 metadata 数据
+         * getDataRequest.getWatch() 方法为了确定是否有 watch 注册，其值只有 true 与 false 的区别
+         * 如果此方法返回 true，那么注入当前服务端-客户端连接对应的 ServerCnxn 实例于此方法中，否则注入 null
+         * 我们下面进入 DZKDatabase 的 getData() 方法
+         */
         byte[] b = zks.getZKDatabase().getData(path, stat, getDataRequest.getWatch() ? cnxn : null);
+        //利用 byte[] 以及 stat 构造一个响应并返回
         return new GetDataResponse(b, stat);
     }
 

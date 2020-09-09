@@ -95,7 +95,8 @@ import org.slf4j.LoggerFactory;
 /**
  * ZooKeeperServer 无论是在集群模式下还是在单机模式下都代表当前可以处理客户端请求的 ZooKeeper 主机
  * 但是在启动 ZooKeeperServer 实例的顺序上有所区别：
- * 1. 集群模式下：在选举结束后，在 Leader/Follower/Observer 实例的方法中启动,例如 Leader#lead()，Follower.followLeader()
+ * 1. 集群模式下：在选举结束后，在 Leader/Follower/Observer 实例的方法中启动,例如 Leader#lead()，Follower.followLeader()，
+ *      不过实际类型不再是父类型 ZooKeeper，然是子类型：LeaderZooKeeperServer 或者 FollowerZooKeeperServer
  * 2. 单机模式下：在构造 NIOServerCnxnfactory 过程中启动一个 ZooKeeperServer 实例
  *
  * ZooKeeperServer 与 ServerCnxnFactory 密不可分，前者是代表一个应用层的客户端请求处理器，后者则是一个在网络层中负责与客户端的网络通信与线程管理
