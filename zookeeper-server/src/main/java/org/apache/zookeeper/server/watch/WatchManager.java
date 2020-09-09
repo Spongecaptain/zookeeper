@@ -75,6 +75,9 @@ public class WatchManager implements IWatchManager {
         return addWatch(path, watcher, WatcherMode.DEFAULT_WATCHER_MODE);
     }
     //一路到了这里
+    //特别需要注意的是这里的 list 容器都基于 Set 实现，可见我们并不能重复注册
+    //举一个例子来说就是：即使我们重复执行了 `get -w /foo` 命令，但最终也仅仅注册了一次 Watcher，
+    //在触发一次之后，只有再次注册，才能触发新事件
     @Override
     public synchronized boolean addWatch(String path, Watcher watcher, WatcherMode watcherMode) {
         if (isDeadWatcher(watcher)) {
