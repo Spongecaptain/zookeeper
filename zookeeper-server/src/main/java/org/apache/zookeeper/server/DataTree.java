@@ -651,21 +651,28 @@ public class DataTree {
         childWatches.triggerWatch(path, EventType.NodeDeleted, processed);
         childWatches.triggerWatch("".equals(parentName) ? "/" : parentName, EventType.NodeChildrenChanged);
     }
-
+    //我们从这个方法入手来分析 ZooKeeper 如何来触发 Watcher，此时线程为 SyncRequestProcessor 线程来负责执行
     public Stat setData(String path, byte[] data, int version, long zxid, long time) throws KeeperException.NoNodeException {
+        //新建一个 Stat
         Stat s = new Stat();
+        //得到 path 对应的 DataNode 节点
         DataNode n = nodes.get(path);
+        //如果节点为 null，说明 path 不合法，抛出异常
         if (n == null) {
             throw new KeeperException.NoNodeException();
         }
         byte[] lastdata = null;
-        synchronized (n) {
+        synchronized (n) {//上锁，上锁期间，其他线程不可读、不可写（写操作也会对 DataNode 节点上锁）
             lastdata = n.data;
             nodes.preChange(path, n);
+            //1. 修改 DataNode 的数据
             n.data = data;
+            //2. 修改 Node 的内部的 Stat 实例的属性
+            //可见，即使我们给 DataNode 赋予完全相同的值，Stat 的相关属性还是会改变
             n.stat.setMtime(time);
             n.stat.setMzxid(zxid);
             n.stat.setVersion(version);
+            //3. 给新构造的  Stat 实例初始化
             n.copyStat(s);
             nodes.postChange(path, n);
         }
@@ -675,9 +682,13 @@ public class DataTree {
         if (lastPrefix != null) {
             this.updateCountBytes(lastPrefix, dataBytes - (lastdata == null ? 0 : lastdata.length), 0);
         }
+        //增加总的数据和路径大小
         nodeDataSize.addAndGet(getNodeSize(path, data) - getNodeSize(path, lastdata));
 
+        //更新写操作的 WriteStat 实例
         updateWriteStat(path, dataBytes);
+        //通过 WatchManager.triggerWatch() 方法来触发 Watcher 的事件，我们下面进一步来看其实现方式
+        //入口参数分别为：路径 事件类型
         dataWatches.triggerWatch(path, EventType.NodeDataChanged);
         return s;
     }

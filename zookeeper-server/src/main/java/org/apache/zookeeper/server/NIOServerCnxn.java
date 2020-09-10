@@ -674,11 +674,16 @@ public class NIOServerCnxn extends ServerCnxn {
 
     @Override
     public int sendResponse(ReplyHeader h, Record r, String tag, String cacheKey, Stat stat, int opCode) {
+        // 得到响应的字节大小
         int responseSize = 0;
         try {
+            //主要将 ReplyHeader、WatcherEvent（Record）序列化为字节数组
             ByteBuffer[] bb = serialize(h, r, tag, cacheKey, stat, opCode);
+            // 得到响应的字节大小
             responseSize = bb[0].getInt();
+            //将 ByteBuffer 改为读模式
             bb[0].rewind();
+            //发送 ByteBuffer（还是基于异步实现，其加入到相关队列中）
             sendBuffer(bb);
             decrOutstandingAndCheckThrottle(h);
         } catch (Exception e) {
@@ -692,22 +697,29 @@ public class NIOServerCnxn extends ServerCnxn {
      *
      * @see org.apache.zookeeper.server.ServerCnxnIface#process(org.apache.zookeeper.proto.WatcherEvent)
      */
+    //NIOSreverCnxn 基于 JDK NIO 实现，其用于处理 WatchedEvent 事件
     @Override
     public void process(WatchedEvent event) {
+        //首先构造一个 ReplyHeader 实例，其字段分别的含义为：
+        // ClientCnxn.NOTIFICATION_XID 用于说明这个是事件通知响应
+        // zxid 为 -1 说明这个响应消息没有必要告知 zxid
+        // err 为 0 说明这个响应消息没有错误
         ReplyHeader h = new ReplyHeader(ClientCnxn.NOTIFICATION_XID, -1L, 0);
+        //打印日志
         if (LOG.isTraceEnabled()) {
             ZooTrace.logTraceMessage(
                 LOG,
                 ZooTrace.EVENT_DELIVERY_TRACE_MASK,
                 "Deliver event " + event + " to 0x" + Long.toHexString(this.sessionId) + " through " + this);
         }
-
+        // 将 WatchedEvent 转换为 WatcherEvent，前者用于程序内部处理，后者用于事件序列化的发送
         // Convert WatchedEvent to a type that can be sent over the wire
         WatcherEvent e = event.getWrapper();
 
         // The last parameter OpCode here is used to select the response cache.
         // Passing OpCode.error (with a value of -1) means we don't care, as we don't need
         // response cache on delivering watcher events.
+        // 这里主要是将 ReplyHeader、WatcherEvent 序列化后发送，我们可以选择进去看看
         int responseSize = sendResponse(h, e, "notification", null, null, ZooDefs.OpCode.error);
         ServerMetrics.getMetrics().WATCH_BYTES.add(responseSize);
     }

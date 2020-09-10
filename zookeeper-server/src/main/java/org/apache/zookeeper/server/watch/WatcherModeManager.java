@@ -59,7 +59,8 @@ class WatcherModeManager {
     Map<Key, WatcherMode> getWatcherModes() {
         return watcherModes;
     }
-    //设置 Watcher 模式
+    //设置 Watcher 模式：如果是默认模式，那么就没必要在 watcherModes（hashMap）中注册，删除即可
+    //否则，需要向 hashMap 中添加该模式
     void setWatcherMode(Watcher watcher, String path, WatcherMode mode) {
         if (mode == WatcherMode.DEFAULT_WATCHER_MODE) {
             removeWatcher(watcher, path);

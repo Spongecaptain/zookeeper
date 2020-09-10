@@ -77,7 +77,7 @@ public class WatchManager implements IWatchManager {
     //一路到了这里
     //特别需要注意的是这里的 list 容器都基于 Set 实现，可见我们并不能重复注册
     //举一个例子来说就是：即使我们重复执行了 `get -w /foo` 命令，但最终也仅仅注册了一次 Watcher，
-    //在触发一次之后，只有再次注册，才能触发新事件
+    //在触发一次之后，只有再次注册，才能再次触发事件
     @Override
     public synchronized boolean addWatch(String path, Watcher watcher, WatcherMode watcherMode) {
         if (isDeadWatcher(watcher)) {
@@ -131,28 +131,39 @@ public class WatchManager implements IWatchManager {
     public WatcherOrBitSet triggerWatch(String path, EventType type) {
         return triggerWatch(path, type, null);
     }
-
+    //这个方法来触发 Watcher 事件
     @Override
     public WatcherOrBitSet triggerWatch(String path, EventType type, WatcherOrBitSet supress) {
+        //1. 构造一个 WatchedEvent 实例：依次封装了事件类型、
         WatchedEvent e = new WatchedEvent(type, KeeperState.SyncConnected, path);
+        //2. 构造一个新的 Set<Watcher> 容器，用于存放稍后待触发的 Watcher
         Set<Watcher> watchers = new HashSet<>();
+        //3. 得到当前路径的父路径迭代器（包括当前路径）
         PathParentIterator pathParentIterator = getPathParentIterator(path);
         synchronized (this) {
-            for (String localPath : pathParentIterator.asIterable()) {
+            for (String localPath : pathParentIterator.asIterable()) {//迭代所有父路径 path
                 Set<Watcher> thisWatchers = watchTable.get(localPath);
                 if (thisWatchers == null || thisWatchers.isEmpty()) {
                     continue;
                 }
+                //得到一个父路径对应的 Watcher 迭代器
                 Iterator<Watcher> iterator = thisWatchers.iterator();
+
                 while (iterator.hasNext()) {
                     Watcher watcher = iterator.next();
                     WatcherMode watcherMode = watcherModeManager.getWatcherMode(watcher, localPath);
+                    //首先判断符路径对应的 Watcher 是否处于迭代模式下
                     if (watcherMode.isRecursive()) {
+                        //在判断 Watcher 的类型是否是 NodeChildrenChanged 类型（即子节点数据更改类型）
                         if (type != EventType.NodeChildrenChanged) {
                             watchers.add(watcher);
                         }
+                        //如果迭代器的当前路径已经不属于 parent 路径，说明此时已经迭代到 path 直接对应的路径
                     } else if (!pathParentIterator.atParentPath()) {
-                        watchers.add(watcher);
+                        watchers.add(watcher);//将 path 直接对应的 Watcher 加入到 Set<Watcher> 容器中
+                        //如果是非持久 Watch 节点，那么因为 watchers.add(watcher) 方法实际上已经消费了，那么就应当将此 Watcher 的注册信息抹去
+                        //包括 path 到 Watcher 以及 Watcher 到 path 的映射信息
+                        //否则就不必进行注册的删除操作，因为其是持久 Watcher
                         if (!watcherMode.isPersistent()) {
                             iterator.remove();
                             Set<String> paths = watch2Paths.get(watcher);
@@ -162,18 +173,21 @@ public class WatchManager implements IWatchManager {
                         }
                     }
                 }
+                //如果 thisWatchers 内没有任何的 Watcher，说明虽然有注册 path，但是并没有为其设置任何的 Watcher，此时删除在 WatchManager 中的注册信息
                 if (thisWatchers.isEmpty()) {
                     watchTable.remove(localPath);
                 }
             }
         }
+        //如果 watchers 为空，说明包括父节点在内，也不存在任何的 Watcher 与之对应，打印一条日志后返回
         if (watchers.isEmpty()) {
             if (LOG.isTraceEnabled()) {
                 ZooTrace.logTraceMessage(LOG, ZooTrace.EVENT_DELIVERY_TRACE_MASK, "No watchers for " + path);
             }
             return null;
         }
-
+        //遍历 Set<Watcher> watchers 局部变量，通过调用 Watcher.process(WatchedEvent event) 方法完成事件的通知
+        //因为我们在这里分析的 Watcher 为 ServerCnxn 实例，因此我们去看其如何实现的。以基于 JDK NIO 的 NIOServerCnxn 为例 NIOServerCnxn#process()
         for (Watcher w : watchers) {
             if (supress != null && supress.contains(w)) {
                 continue;
