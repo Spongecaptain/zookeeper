@@ -38,14 +38,14 @@ class ZKWatchManager implements ClientWatchManager {
 
     private static final Logger LOG = LoggerFactory.getLogger(ZKWatchManager.class);
 
-    private final Map<String, Set<Watcher>> dataWatches = new HashMap<>();
-    private final Map<String, Set<Watcher>> existWatches = new HashMap<>();
-    private final Map<String, Set<Watcher>> childWatches = new HashMap<>();
-    private final Map<String, Set<Watcher>> persistentWatches = new HashMap<>();
-    private final Map<String, Set<Watcher>> persistentRecursiveWatches = new HashMap<>();
+    private final Map<String, Set<Watcher>> dataWatches = new HashMap<>();//当前路径对应节点数据修改的 Watcher
+    private final Map<String, Set<Watcher>> existWatches = new HashMap<>();//当前路径对应节点创建的 Watcher
+    private final Map<String, Set<Watcher>> childWatches = new HashMap<>();//当前路径对应节点的子节点创建的 Watcher
+    private final Map<String, Set<Watcher>> persistentWatches = new HashMap<>();//当前路径对应节点的永久 Watcher
+    private final Map<String, Set<Watcher>> persistentRecursiveWatches = new HashMap<>();//当前路径对应节点的永久递归 Watcher
     private final boolean disableAutoWatchReset;
 
-    private volatile Watcher defaultWatcher;
+    private volatile Watcher defaultWatcher;//客户端默认 Watcher 事件处理器
 
     ZKWatchManager(boolean disableAutoWatchReset, Watcher defaultWatcher) {
         this.disableAutoWatchReset = disableAutoWatchReset;

@@ -134,7 +134,7 @@ public class WatchManager implements IWatchManager {
     //这个方法来触发 Watcher 事件
     @Override
     public WatcherOrBitSet triggerWatch(String path, EventType type, WatcherOrBitSet supress) {
-        //1. 构造一个 WatchedEvent 实例：依次封装了事件类型、
+        //1. 构造一个 WatchedEvent 实例：依次封装了事件类型、通知状态、节点路径
         WatchedEvent e = new WatchedEvent(type, KeeperState.SyncConnected, path);
         //2. 构造一个新的 Set<Watcher> 容器，用于存放稍后待触发的 Watcher
         Set<Watcher> watchers = new HashSet<>();
