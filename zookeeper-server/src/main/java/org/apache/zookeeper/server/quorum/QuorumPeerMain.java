@@ -71,6 +71,7 @@ import org.slf4j.LoggerFactory;
  *
  */
 @InterfaceAudience.Public
+//此类是集群模式下 ZooKeeper 节点的启动入口类
 public class QuorumPeerMain {
 
     private static final Logger LOG = LoggerFactory.getLogger(QuorumPeerMain.class);

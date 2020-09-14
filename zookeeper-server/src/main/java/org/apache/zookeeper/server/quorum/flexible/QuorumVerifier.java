@@ -28,7 +28,7 @@ import org.apache.zookeeper.server.quorum.QuorumPeer.QuorumServer;
  * identifiers constitutes a quorum.
  *
  */
-
+//这个接口用于判断集群内的节点之间是否构成了一个关于 Leader、Follower 的共识
 public interface QuorumVerifier {
 
     long getWeight(long id);

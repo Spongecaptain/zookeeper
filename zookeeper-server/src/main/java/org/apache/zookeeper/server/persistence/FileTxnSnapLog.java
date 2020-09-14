@@ -322,6 +322,8 @@ public class FileTxnSnapLog {
      */
 
     //这个方法用于当内存快照落后于事务日志时，快速地将落后的部分日志作用于内存中的快照
+    //ZooKeeper 服务端每接收一个事务，会为其记录写操作日志，但是内存快照在累计接收一定次数（这个数具有一定随机性）的事务操作后才会进行
+    //这个方法就是避免了持久化的内存快照不足以反映所有写操作的问题（日志总是能足以反映所有写操作）
     public long fastForwardFromEdits(
         DataTree dt,
         Map<Long, Integer> sessions,

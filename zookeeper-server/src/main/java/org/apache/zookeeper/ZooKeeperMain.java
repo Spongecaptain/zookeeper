@@ -99,12 +99,15 @@ public class ZooKeeperMain {
             System.err.println("\t" + cmd + " " + commandMap.get(cmd));
         }
     }
-
+    //这是默认的客户端 Watcher 事件处理器，其处理 Watcher 事件非常简单
     private class MyWatcher implements Watcher {
 
         public void process(WatchedEvent event) {
+
             if (getPrintWatches()) {
+                //利用 System.out.println 打印出 `WATCHER::` 字符串
                 ZooKeeperMain.printMessage("WATCHER::");
+                //还是利用 System.out.println 打印出事件对应的字符串
                 ZooKeeperMain.printMessage(event.toString());
             }
         }
@@ -282,7 +285,7 @@ public class ZooKeeperMain {
     public ZooKeeperMain(ZooKeeper zk) {
         this.zk = zk;
     }
-
+    //此方法作为 ZooKeeperMain 的 Main Loop 而存在
     void run() throws IOException, InterruptedException {
 
         if (cl.getCommand() == null) {
@@ -343,8 +346,10 @@ public class ZooKeeperMain {
 
     public void executeLine(String line) throws InterruptedException, IOException {
         if (!line.equals("")) {//要求命令行非空，不能是单纯的空格或者回车
+            //解析命令
             cl.parseCommand(line);
-            addToHistory(commandCount, line);//将执行过的命令记录下来，这使得我们能够在命令行中输入 history 命令得到命令的执行记录
+            //将执行过的命令记录下来，这使得我们能够在命令行中输入 history 命令得到命令的执行记录
+            addToHistory(commandCount, line);
             processCmd(cl);//处理命令（重点）
             commandCount++;
         }
@@ -438,7 +443,7 @@ public class ZooKeeperMain {
             cliCmd.setZk(zk);
             //执行命令的主要逻辑,CliCommand 抽象类有非常多的具体子类
             //例如 create 方法对应 CreateCommand 类，而 getAcl 对应 GetAclCommand 类
-            //我们这里以 create 方法为例进行说明
+            //我们这里以 create 方法为例进行说明(以 CreateCommand 类为例)
             watch = cliCmd.parse(args).exec();
         } else if (!commandMap.containsKey(cmd)) {
             usage();

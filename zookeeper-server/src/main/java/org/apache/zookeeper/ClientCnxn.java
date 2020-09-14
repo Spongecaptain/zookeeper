@@ -894,7 +894,7 @@ public class ClientCnxn {
         private final ClientCnxnSocket clientCnxnSocket;
         private Random r = new Random();
         private boolean isFirstConnect = true;
-
+        // 这个方法是 SendThread 线程用于处理可读事件对应的字节信息
         void readResponse(ByteBuffer incomingBuffer) throws IOException {
             ByteBufferInputStream bbis = new ByteBufferInputStream(incomingBuffer);
             BinaryInputArchive bbia = BinaryInputArchive.getArchive(bbis);
@@ -1714,8 +1714,7 @@ public class ClientCnxn {
         // generated later at send-time, by an implementation of ClientCnxnSocket::doIO(),
         // where the packet is actually sent.
         // 将请求头、返回头、请求内容、返回内容、WatchRegistration 等实例封装为一个 Packet 实例
-        // 注意：Package 是有完成的 Watcher 映射注册信息的
-        // 注意：Package 在序列化时，并不会将 Watcher 一并进行序列化传输，
+        // 注意：虽然 Package 具有 Watcher 注册信息的，但 Package 在序列化时，并不会将 Watcher 一并进行序列化传输，
         // 而是选择将其排除在外，封装的意义在于通过 Package 能够找到 Watcher 的注册信息
         packet = new Packet(h, r, request, response, watchRegistration);
         packet.cb = cb;

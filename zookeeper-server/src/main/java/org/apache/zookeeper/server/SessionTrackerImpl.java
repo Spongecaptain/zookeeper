@@ -44,11 +44,11 @@ import org.slf4j.LoggerFactory;
 public class SessionTrackerImpl extends ZooKeeperCriticalThread implements SessionTracker {
 
     private static final Logger LOG = LoggerFactory.getLogger(SessionTrackerImpl.class);
-
+    //Long 类型的 sessionID 映射为 Session 类型实例
     protected final ConcurrentHashMap<Long, SessionImpl> sessionsById = new ConcurrentHashMap<Long, SessionImpl>();
-
+    //
     private final ExpiryQueue<SessionImpl> sessionExpiryQueue;
-
+    //Long 类型的 sessionID 映射为 Session 实例对应的超时时间
     private final ConcurrentMap<Long, Integer> sessionsWithTimeout;
     private final AtomicLong nextSessionId = new AtomicLong();
 
@@ -60,9 +60,9 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
             isClosing = false;
         }
 
-        final long sessionId;
-        final int timeout;
-        boolean isClosing;
+        final long sessionId;//会话ID，用来唯一标识一个会话，每次客户端创建新会话的时候，ZooKeeper 都会为其分配一个全局唯一的 sessionID
+        final int timeout;//会话超时时间。客户端在构造 ZooKeeper 实例的时候，会配置一个 timeout 参数用于指定会话的超时时间。
+        boolean isClosing;//该属性用于标记一个会话是否已经被关闭
 
         Object owner;
 
@@ -93,6 +93,13 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
      *
      * @param id server Id
      * @return the session Id
+     */
+    /**
+     * 在 SessionTracker 初始化的时候，会调用 `initializeNextSession()` 方法来生成一个初始化的 sessionID，
+     * 之后在 ZooKeeper 的正常运行过程中，会在该 sessionID 的基础上为每个会话进行分配。
+     * 注意事项：这个方法仅仅会调用一次，用于初始化 ZooKeeper 服务器的 SessionID，以后为 Session 创建需要重新基于此进行创建
+     * @param id
+     * @return
      */
     public static long initializeNextSessionId(long id) {
         long nextSid;

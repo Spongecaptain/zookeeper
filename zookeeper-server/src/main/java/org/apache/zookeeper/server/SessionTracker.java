@@ -30,6 +30,13 @@ import org.apache.zookeeper.KeeperException.SessionExpiredException;
  * FollowerZooKeeperServer uses a SessionTracker which is basically a simple
  * shell to track information to be forwarded to the leader.
  */
+
+/**
+ * SessionTracker 接口定义了 ZooKeeperServer 来进行 Session 追踪的相关方法。
+ * SessionTracker 是 ZooKeeper 服务端的会话管理器，负责会话的创建、管理和清理等工作。
+ * 可以说，整个会话的生命周期都离不开 SessionTracker 的管理。
+ * 具体实现类可以参考 SessionTrackerImpl 类
+ */
 public interface SessionTracker {
 
     interface Session {
