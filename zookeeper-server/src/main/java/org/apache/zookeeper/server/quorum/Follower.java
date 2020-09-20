@@ -84,8 +84,11 @@ public class Follower extends Learner {
             self.setZabState(QuorumPeer.ZabState.DISCOVERY);
             QuorumServer leaderServer = findLeader();
             try {
+                //向 Leader 节点主动建立 Socket 连接
                 connectToLeader(leaderServer.addr, leaderServer.hostname);
                 connectionTime = System.currentTimeMillis();
+                // registerWithLeader 方法会第一次向 Leader 端的 Socket 发送一个 tag 为 packet 的数据包
+                // 这个数据包包括了此 Follower 节点的概述情况：epoch 以及 zxid
                 long newEpochZxid = registerWithLeader(Leader.FOLLOWERINFO);
                 if (self.isReconfigStateChange()) {
                     throw new Exception("learned about role change");

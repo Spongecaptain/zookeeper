@@ -447,14 +447,18 @@ public class Leader extends LearnerMaster {
 
         @Override
         public void run() {
+            //确保 ZooKeeper 服务器线程没有关闭且 List<ServerSocket> 容器不为空
             if (!stop.get() && !serverSockets.isEmpty()) {
+                //根据 Leader.serverSockets 容器大小来创建一个线程池
                 ExecutorService executor = Executors.newFixedThreadPool(serverSockets.size());
+                //创建一个倒计时用于锁
                 CountDownLatch latch = new CountDownLatch(serverSockets.size());
-
+                //为 Leader.serverSockets 容器内的每一个 ServerSocket 创建一个 LearnerCnxAcceptorHandler 实例
                 serverSockets.forEach(serverSocket ->
                         executor.submit(new LearnerCnxAcceptorHandler(serverSocket, latch)));
 
                 try {
+                    //当前线程阻塞，直到线程池中的所有线程都调用了 latch.countDown() 方法（通常是在 finally 语句块中执行）
                     latch.await();
                 } catch (InterruptedException ie) {
                     LOG.error("Interrupted while sleeping in LearnerCnxAcceptor.", ie);
@@ -489,8 +493,9 @@ public class Leader extends LearnerMaster {
             @Override
             public void run() {
                 try {
+                    //为当前线程修改名字
                     Thread.currentThread().setName("LearnerCnxAcceptorHandler-" + serverSocket.getLocalSocketAddress());
-
+                    //在没有关闭的情况下不断地接收新连接请求
                     while (!stop.get()) {
                         acceptConnections();
                     }
@@ -509,15 +514,21 @@ public class Leader extends LearnerMaster {
                 Socket socket = null;
                 boolean error = false;
                 try {
+                    //当没有新连接请求时，线程阻塞于此
                     socket = serverSocket.accept();
 
                     // start with the initLimit, once the ack is processed
                     // in LearnerHandler switch to the syncLimit
+                    // 设置 socket 的超时时间
                     socket.setSoTimeout(self.tickTime * self.initLimit);
+                    // TCP_NODEALY 的默认值为 false，表示采用 Negale 算法。
+                    // 如果调用 setTcpNoDelay (true) 方法，就会关闭 Socket 的缓冲，确保数据及时发送
                     socket.setTcpNoDelay(nodelay);
-
+                    // Socket 基于 InputStream 以及 OutputStream 进行数据通信，BufferedInputStream 用于提供缓存的作用
                     BufferedInputStream is = new BufferedInputStream(socket.getInputStream());
+                    // 构造一个 LearnerHandler 线程实例
                     LearnerHandler fh = new LearnerHandler(socket, is, Leader.this);
+                    // 异步启动 LearnerHandler 线程的 run() 方法
                     fh.start();
                 } catch (SocketException e) {
                     error = true;
@@ -583,19 +594,22 @@ public class Leader extends LearnerMaster {
         LOG.info("LEADING - LEADER ELECTION TOOK - {} {}", electionTimeTaken, QuorumPeer.FLE_TIME_UNIT);
         self.start_fle = 0;
         self.end_fle = 0;
-
+        //注册 JMX，其由于管理 Java Application
         zk.registerJMX(new LeaderBean(this, zk), self.jmxLocalPeerBean);
 
         try {
             self.setZabState(QuorumPeer.ZabState.DISCOVERY);
             self.tick.set(0);
+            //再次尝试反序列快照数据
             zk.loadData();
-
+            //根据 epoch 以及 zxid 来构造一个新的 Leader 状态
             leaderStateSummary = new StateSummary(self.getCurrentEpoch(), zk.getLastProcessedZxid());
 
             // Start thread that waits for connection requests from
             // new followers.
+            //构造一个 LearnerCnxAcceptor 线程实例
             cnxAcceptor = new LearnerCnxAcceptor();
+            //异步地启动 LearnerCnxAcceptor#run
             cnxAcceptor.start();
 
             long epoch = getEpochToPropose(self.getId(), self.getAcceptedEpoch());
@@ -683,7 +697,7 @@ public class Leader extends LearnerMaster {
                 }
                 return;
             }
-
+            //用这个方法启动一个 ZooKeeperServer 实例
             startZkServer();
 
             /**
@@ -1346,6 +1360,7 @@ public class Leader extends LearnerMaster {
     }
 
     // VisibleForTesting
+    //Leader.connectingFollowers 容器代表一个与参与竞选的、与当前 Leader 建立连接的 Follower 节点容器
     protected final Set<Long> connectingFollowers = new HashSet<Long>();
 
     private volatile boolean quitWaitForEpoch = false;
@@ -1402,34 +1417,62 @@ public class Leader extends LearnerMaster {
         }
     }
 
+    /**
+     *
+     * @param sid learner id 对应于来自 Learner 发来的数据包中 Learner 的 serverID
+     * @param lastAcceptedEpoch 对应于来自 Learner 发来的数据包中 Learner 的 epoch 值
+     *
+     * 理解这个方法最重要的地方在于我们要知道每一个 Learner 向当前 Leader 发送第一个表示其状态的数据包后都会走到这里
+     * 而每一个 Learner 在 Leader 处都对应一个线程，因此这个方法实际上是一个并发执行的方法
+     * 因此：首先，方法的执行完全在 Leader.connectingFollowers 锁语句块下，确保了线程安全
+     *      其次，此方法在 Leader 没有达成共识以及未超时的情况下会阻塞 Learner 在 Leader 处对应的线程
+     *      最后，线程唤醒的方式是 Leader 节点逐渐受到超过半数的 Follower 节点的连接，
+     *      一开始阻塞的线程依赖于其余 Learner 在 Leader 处对应的线程
+     * @return 返回值为 Leader 选举过程中最大的 epoch 值
+     * @throws InterruptedException
+     * @throws IOException
+     */
     @Override
     public long getEpochToPropose(long sid, long lastAcceptedEpoch) throws InterruptedException, IOException {
         synchronized (connectingFollowers) {
             if (!waitingForNewEpoch) {
                 return epoch;
             }
+            //如果 Learner 的届号比当前 Leader 的届号还要大，
+            //为了确保当前 Leader 在集群所有节点中届号总是最大，于是取 lastAcceptedEpoch + 1
             if (lastAcceptedEpoch >= epoch) {
                 epoch = lastAcceptedEpoch + 1;
             }
+            //查询 qp 中的 sid 是否为集群节点中的参与者，例如 Observer 实例就不属于参与者
             if (isParticipant(sid)) {
-                connectingFollowers.add(sid);
+                connectingFollowers.add(sid);//符合条件的将其加入此容器
             }
+            //得到当前 QuorumPeer 实例内部的 QuorumVerifier 实例，后者负责领导者选举是否通过
             QuorumVerifier verifier = self.getQuorumVerifier();
+            //过半验证，只要过半数的 ZooKeeper Server 节点能够与当前 Leader 建立连接，并对 epoch 达成共识即可
+            //不过，在一开始当然没有过半数的，因此会走到 else 逻辑
             if (connectingFollowers.contains(self.getId()) && verifier.containsQuorum(connectingFollowers)) {
                 waitingForNewEpoch = false;
+                //已经达成共识，最终将 Leader 中的 epoch 设置给 QuorumPeer 的 epoch
                 self.setAcceptedEpoch(epoch);
+                //将先一步建立连接的 Learner 实例对应的线程唤醒，因为此时已经达成共识
                 connectingFollowers.notifyAll();
+              //没有达成过半共识，走 else 路线
             } else {
+                //得到当前时间，并赋值给 Leader.timeStartWaitForEpoch 字段
                 long start = Time.currentElapsedTime();
                 if (sid == self.getId()) {
                     timeStartWaitForEpoch = start;
                 }
                 long cur = start;
+                //确定终止时间
                 long end = start + self.getInitLimit() * self.getTickTime();
+                //超时判断
                 while (waitingForNewEpoch && cur < end && !quitWaitForEpoch) {
-                    connectingFollowers.wait(end - cur);
+                    connectingFollowers.wait(end - cur);//超时阻塞于 connectingFollowers 实例
                     cur = Time.currentElapsedTime();
                 }
+                //抛出异常，因为直到超时设定 Leader 都没有收到过半数 Learner 节点的连接
                 if (waitingForNewEpoch) {
                     throw new InterruptedException("Timeout while waiting for epoch from quorum");
                 }
@@ -1448,13 +1491,26 @@ public class Leader extends LearnerMaster {
     // VisibleForTesting
     protected boolean electionFinished = false;
 
+    /**
+     * 这个方法因为会被多个 Learner 对应在 Leader 处的线程调用，因此是一个非线程安全方法
+     * 因此在 electingFollowers 容器中进行方法的执行
+     * waitForEpochAck() 方法主要用于达成过半数节点对新 epoch 的 ack
+     * @param id
+     * @param ss
+     * @throws IOException
+     * @throws InterruptedException
+     */
     @Override
     public void waitForEpochAck(long id, StateSummary ss) throws IOException, InterruptedException {
         synchronized (electingFollowers) {
+            //如果选举已经完成，那么就直接退出
             if (electionFinished) {
                 return;
             }
             if (ss.getCurrentEpoch() != -1) {
+                //如果发现 Follower 节点发来的 epoch 高于 Leader 选举过程中达成共识的 epoch，那么就抛出一个异常
+                //这种异常案例来说是不会发生的，因为这些达成共识的 Learner 在 LearnerHandler#run 方法中已经对
+                //epoch 达成了共识（取了大伙的最大的 epoch 值 +1 ）
                 if (ss.isMoreRecentThan(leaderStateSummary)) {
                     throw new IOException("Follower is ahead of the leader, leader summary: "
                                           + leaderStateSummary.getCurrentEpoch()
@@ -1462,10 +1518,12 @@ public class Leader extends LearnerMaster {
                                           + leaderStateSummary.getLastZxid()
                                           + " (last zxid)");
                 }
+                //将 Follower 节点加入到 electingFollowers 中
                 if (ss.getLastZxid() != -1 && isParticipant(id)) {
                     electingFollowers.add(id);
                 }
             }
+            //下面的处理逻辑类似于 Leader#getEpochToPropose 方法的处理逻辑
             QuorumVerifier verifier = self.getQuorumVerifier();
             if (electingFollowers.contains(self.getId()) && verifier.containsQuorum(electingFollowers)) {
                 electionFinished = true;

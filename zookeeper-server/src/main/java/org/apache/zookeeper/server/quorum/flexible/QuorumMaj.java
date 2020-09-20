@@ -32,6 +32,7 @@ import org.apache.zookeeper.server.quorum.QuorumPeerConfig.ConfigException;
  * straightforward.
  *
  */
+//这个类用于判断 Leader 选举是否达到过半共识
 public class QuorumMaj implements QuorumVerifier {
 
     private Map<Long, QuorumServer> allMembers = new HashMap<Long, QuorumServer>();

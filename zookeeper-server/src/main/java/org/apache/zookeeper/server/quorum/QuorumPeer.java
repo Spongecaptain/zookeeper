@@ -1104,6 +1104,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     private void loadDataBase() {
         try {
+            //将快照文件序列化到内存中的 DataTree 实例
             zkDb.loadDataBase();
 
             // load the epochs
@@ -1402,6 +1403,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             /*
              * Main loop
              * 这是 ZooKeeper 最核心的主循环线程模型
+             * 主要用于根据集群中当前 ZooKeeper 节点的状态进行不同的处理逻辑
              */
             while (running) {
                 //得到集群中本主机的状态
@@ -1506,9 +1508,10 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                 //FOLLOWING 状态对应于 FOLLOWER 节点
                 case FOLLOWING:
                     try {
+                        //这里的逻辑类似于 LEADING 状态下的方法逻辑，这里不再赘述
                         LOG.info("FOLLOWING");
-                        //TODO setFollower 是一个关键的方法，用于设置 ZooKeeperServer 的具体类型
                         setFollower(makeFollower(logFactory));
+                        //直接来看 Follower.followLeader() 方法
                         follower.followLeader();
                     } catch (Exception e) {
                         LOG.warn("Unexpected exception", e);
@@ -1525,8 +1528,12 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                 case LEADING:
                     LOG.info("LEADING");
                     try {
+                        //首先，利用工厂方法 makeLeader() 来重新构造一个 Leader 实例
+                        //其次，利用 setLeader() 方法将刚重新构造的 Leader 实例替代原来的（如果有的话）QuorumPeer 实例的 leader 字段
                         setLeader(makeLeader(logFactory));
+                        //调用 Leader 的 lead() 方法
                         leader.lead();
+                        //为什么要设置为 null? 只是为了
                         setLeader(null);
                     } catch (Exception e) {
                         LOG.warn("Unexpected exception", e);

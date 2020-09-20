@@ -283,6 +283,7 @@ public class ZKDatabase {
     //将内存快照、事务提交日志一并加载到内存中
     public long loadDataBase() throws IOException {
         long startTime = Time.currentElapsedTime();
+        //我们进入 restore() 方法中，看看其运行逻辑，其为反序列化的主要逻辑
         long zxid = snapLog.restore(dataTree, sessionsWithTimeouts, commitProposalPlaybackListener);
         initialized = true;
         long loadTime = Time.currentElapsedTime() - startTime;
