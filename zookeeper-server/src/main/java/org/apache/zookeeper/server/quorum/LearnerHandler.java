@@ -761,7 +761,7 @@ public class LearnerHandler extends ZooKeeperThread {
                 int type;
                 //下面按照 Leader 发来数据包的不同类型来执行不同的逻辑
                 switch (qp.getType()) {
-                //当消息为对 Leader 命令的 ACK 时
+                //当消息为对 Leader 命令的 ACK 时(2PC 中来自 Learner 对 Leader Proposal 的 ACK 回复)
                 case Leader.ACK:
                     if (this.learnerType == LearnerType.OBSERVER) {
                         LOG.debug("Received ACK from Observer {}", this.sid);
@@ -1074,6 +1074,24 @@ public class LearnerHandler extends ZooKeeperThread {
         long prevProposalZxid = -1;
         //遍历事务迭代器，将符合要求的事务操作封装为 QuorumPacket 实例，并将其加入到 QuorumPacket 阻塞队列中
         //注意事项：迭代器的迭代过程中的 Proposal 实例的 zxid 并不一定完全按照 zxid 递增顺序进行
+
+        /**
+         * 为什么需要遍历事务迭代器的方式来完成数据一致性的同步操作？
+         * 这是因为事务并不会完全按照 zxid 的大小顺序进行存放的。例如在某一时刻 Leader 节点接收到了大量的写请求，
+         * 其在本地为这些写请求依次分配递增的 zxid，而且**并发地**进行 2PC 提交。但是因为网络原因，Follower
+         * 节点处并不能确保一定按照 zxid 顺序来接收 Proposal，由于日志写操作只能顺序追加，因此事务在 Follower 节点处就不再是按照 zxid 来存储了，
+         * 当然 Leader 节点也存在这个问题。
+         * 总之，使用迭代器的原因在于：顺序写入的 Proposal 的 zxid 并不一定是按照递增顺序存储的，
+         * Leader 在遍历日志时，必须从头到尾依次遍历。
+         * 举一个例子：
+         * Leader 处的 zxid 为：3，4，5，8，7，6 而 Learner 节点的 lastZxid 为 7，
+         * 那么当 Leader 节点利用事务迭代器遍历到 zxid 为 8 的 Proposal 时，
+         * 其会选择告知 Learner 需要为 zxid 为 8 的 Proposal 进行数据的同步。
+         * 但是其不能直接决定迭代器之后的 Proposal 都需要给 Learner 节点进行数据同步，
+         * 因为 Proposal 并不完全按照 zxid 递增顺序进行存储，
+         * zxid 为 7、6 的 Proposal 并不需要给 Learner 进行数据同步。
+         */
+
         while (itr.hasNext()) {
             Proposal propose = itr.next();
             //得到 Proposal 对应的 zxid
