@@ -154,7 +154,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
      * leader or we just let the sync operation flow through like a read. The flag will
      * be false if the CommitProcessor is in a Leader pipeline.
      */
-    boolean matchSyncs;
+    boolean matchSyncs;//在 Leader 端为 false，在 Learner 端为 true，因为 Learner 端同步请求需要 Leader 回复，但是 Leader 端不需要
 
     public CommitProcessor(RequestProcessor nextProcessor, String id, boolean matchSyncs, ZooKeeperServerListener listener) {
         super("CommitProcessor:" + id, listener);
@@ -205,6 +205,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
              */
             int requestsToProcess = 0;
             boolean commitIsWaiting = false;
+            //这是 CommitProcessor 的 Main Loops
             do {
                 /*
                  * Since requests are placed in the queue before being sent to
@@ -218,15 +219,16 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                 // Avoid sync if we have something to do
                 if (requestsToProcess == 0 && !commitIsWaiting) {
                     // Waiting for requests to process
+                    // 阻塞直到事务被处理
                     synchronized (this) {
                         while (!stopped && requestsToProcess == 0 && !commitIsWaiting) {
-                            wait();
+                            wait();//因为是将 CommitProcessor 实例自身作为锁，因此这里的休眠操作需要在 CommitProcessor 实例锁下调用 notify/notifyAll 方法
                             commitIsWaiting = !committedRequests.isEmpty();
                             requestsToProcess = queuedRequests.size();
                         }
                     }
                 }
-
+                //当 CommitProcessor 线程阻塞完毕之后就是事务的的提交操作
                 ServerMetrics.getMetrics().READS_QUEUED_IN_COMMIT_PROCESSOR.add(numReadQueuedRequests.get());
                 ServerMetrics.getMetrics().WRITES_QUEUED_IN_COMMIT_PROCESSOR.add(numWriteQueuedRequests.get());
                 ServerMetrics.getMetrics().COMMITS_QUEUED_IN_COMMIT_PROCESSOR.add(committedRequests.size());
@@ -244,16 +246,20 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                  */
                 Request request;
                 int readsProcessed = 0;
+                //以下又是 Main Loop 中的一个 Loop
+                //这个循环的条件是：没有停止、有请求需要被处理、取出的 Request 不为空
                 while (!stopped
                        && requestsToProcess > 0
                        && (maxReadBatchSize < 0 || readsProcessed <= maxReadBatchSize)
                        && (request = queuedRequests.poll()) != null) {
                     requestsToProcess--;
+                    //如果是事务性请求
                     if (needCommit(request) || pendingRequests.containsKey(request.sessionId)) {
                         // Add request to pending
                         Deque<Request> requests = pendingRequests.computeIfAbsent(request.sessionId, sid -> new ArrayDeque<>());
                         requests.addLast(request);
                         ServerMetrics.getMetrics().REQUESTS_IN_SESSION_QUEUE.add(requests.size());
+                    //如果是非事务性请求，那么直接就将请求转发给下一个请求处理器
                     } else {
                         readsProcessed++;
                         numReadQueuedRequests.decrementAndGet();
@@ -599,21 +605,31 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
         wakeup();
     }
 
+    /**
+     * 向 CommitProcessor 提交一个 Request 实例的方法
+     * @param request
+     */
     @Override
     public void processRequest(Request request) {
+        //确保没有停止
         if (stopped) {
             return;
         }
         LOG.debug("Processing request:: {}", request);
         request.commitProcQueueStartTime = Time.currentElapsedTime();
+        //简单地将请求加入 CommitProcessor.queuedRequests 队列中
         queuedRequests.add(request);
         // If the request will block, add it to the queue of blocking requests
+        // needCommit(Request request) 方法实际上就是判断事务是否是写操作，是写操作就是需要 commit 的事务
         if (needCommit(request)) {
+            //将 Request 加入到 CommitProcessor.queuedWriteRequests 队列中
             queuedWriteRequests.add(request);
+            //自增一下计数器
             numWriteQueuedRequests.incrementAndGet();
         } else {
             numReadQueuedRequests.incrementAndGet();
         }
+        //唤醒线程
         wakeup();
     }
 

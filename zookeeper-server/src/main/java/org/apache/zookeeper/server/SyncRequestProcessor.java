@@ -287,6 +287,10 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
         }
     }
 
+    /**
+     * 这里的操作非常简单，就是将请求加入到 SyncRequestProcessor.queuedRequests 队列中
+     * @param request 需要同步的请求只有写操作请求，即我们所说的事务
+     */
     public void processRequest(final Request request) {
         Objects.requireNonNull(request, "Request cannot be null");
 

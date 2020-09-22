@@ -82,16 +82,21 @@ public class ProposalRequestProcessor implements RequestProcessor {
         if (request instanceof LearnerSyncRequest) {
             zks.getLeader().processSync((LearnerSyncRequest) request);
         } else {
+            //如果是事务请求，先将请求交给写一个 Processor(CommitProcessor)来处理
             if (shouldForwardToNextProcessor(request)) {
                 nextProcessor.processRequest(request);
             }
             if (request.getHdr() != null) {
                 // We need to sync and get consensus on any transactions
+                // 事务请求
                 try {
+                    //这里主要是将 request 构造为 Proposal 与 QuorumPacket，仅仅是加入异步队列中，并不会真正负责网络的传输
                     zks.getLeader().propose(request);
                 } catch (XidRolloverException e) {
                     throw new RequestProcessorException(e.getMessage(), e);
                 }
+                // 事务请求还需要走另一条并行的请求处理路线：SyncRequestProcessor -> AckRequestProcessor
+                // 这里的操作也非常简单，就是简单地将其加入到 SyncRequestProcessor 内的队列中
                 syncProcessor.processRequest(request);
             }
         }

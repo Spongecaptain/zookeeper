@@ -1533,7 +1533,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         setLeader(makeLeader(logFactory));
                         //调用 Leader 的 lead() 方法
                         leader.lead();
-                        //为什么要设置为 null? 只是为了
+                        //TODO 为什么要设置为 null?
                         setLeader(null);
                     } catch (Exception e) {
                         LOG.warn("Unexpected exception", e);

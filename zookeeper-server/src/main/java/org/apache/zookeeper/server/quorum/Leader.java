@@ -609,17 +609,20 @@ public class Leader extends LearnerMaster {
             // new followers.
             //构造一个 LearnerCnxAcceptor 线程实例
             cnxAcceptor = new LearnerCnxAcceptor();
-            //异步地启动 LearnerCnxAcceptor#run
+            /**
+             * 异步地启动 LearnerCnxAcceptor#run 方法，我们需要关注其异步执行逻辑
+             * 这是异步完成的，是一个重点
+             */
             cnxAcceptor.start();
-
+            //完成 epoch 共识，其返回值为 Leader 选举过程中最大的 epoch +1
             long epoch = getEpochToPropose(self.getId(), self.getAcceptedEpoch());
-
+            //设置 Leader 内部的 LeaderZooKeeperServer 实例的 zxid
             zk.setZxid(ZxidUtils.makeZxid(epoch, 0));
 
             synchronized (this) {
                 lastProposed = zk.getZxid();
             }
-
+            //将当前 LeaderZooKeeperServer 实例的 zxid 构造为一个 Packet 实例
             newLeaderProposal.packet = new QuorumPacket(NEWLEADER, zk.getZxid(), null, null);
 
             if ((newLeaderProposal.packet.getZxid() & 0xffffffffL) != 0) {
@@ -666,13 +669,19 @@ public class Leader extends LearnerMaster {
             // We have to get at least a majority of servers in sync with
             // us. We do this by waiting for the NEWLEADER packet to get
             // acknowledged
-
+            /**
+             *  waitForEpochAck() 方法主要用于达成过半数节点对新 epoch 的 ack
+             *  epoch 共识操作由 LearnerCnxAcceptor 线程内的 LearnerHandler 完成
+             */
             waitForEpochAck(self.getId(), leaderStateSummary);
             self.setCurrentEpoch(epoch);
             self.setLeaderAddressAndId(self.getQuorumAddress(), self.getId());
             self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
 
             try {
+                /**阻塞，直到过半数的节点返回对新 Leader 数据同步完成的 ack
+                 * 数据同步的操作还是由异步的 LearnerHandler 线程完成
+                 */
                 waitForNewLeaderAck(self.getId(), zk.getZxid());
             } catch (InterruptedException e) {
                 shutdown("Waiting for a quorum of followers, only synced with sids: [ "
@@ -697,7 +706,10 @@ public class Leader extends LearnerMaster {
                 }
                 return;
             }
-            //用这个方法启动一个 ZooKeeperServer 实例
+            /**
+             * 此时 Leader 与其他 Learner 已经达成了对 epoch 以及数据一致性的共识，这个时候才能
+             * 启动一个 ZooKeeperServer 实例（Leader 节点对应 LeaderZooKeeperServer 实例）
+             */
             startZkServer();
 
             /**
@@ -987,7 +999,7 @@ public class Leader extends LearnerMaster {
     /**
      * Keep a count of acks that are received by the leader for a particular
      * proposal
-     *
+     * 这个方法是 2PC 共识算法中 Leader 对于来自 Follower 节点 Proposal ack 的处理
      * @param zxid, the zxid of the proposal sent out
      * @param sid, the id of the server that sent the ack
      * @param followerAddr
@@ -1039,7 +1051,7 @@ public class Leader extends LearnerMaster {
         }
 
         p.addAck(sid);
-
+        //这个方法用于判断 ack 是否已经达成共识
         boolean hasCommitted = tryToCommit(p, zxid, followerAddr);
 
         // If p is a reconfiguration, multiple other operations may be ready to be committed,
@@ -1232,10 +1244,14 @@ public class Leader extends LearnerMaster {
 
     /**
      * create a proposal and send it out to all the members
-     *
+     * 这个方法的主要作用就是将 Request 封装（序列化）为 Proposal 与 QuorumPacket，然后完成两件事：
+     * 1. 将 Proposal 加入到 Leader.outstandingProposals HashMap中，这个 map 的 key 为 zxid，value 为 Proposal
+     * 这个 HashMap 的含义 2PC 中 Leader 决定要持久化、但是还没有完成共识 2PC 的事务
+     * 2. 将 QuorumPacket 加入到所有 Follower 对应的 LearnerHandler 的队列中，LearnerHandler 线程会负责消费此队列上的元素进行发送
      * @param request
      * @return the proposal that is queued to send to all the members
      */
+
     public Proposal propose(Request request) throws XidRolloverException {
         if (request.isThrottled()) {
             LOG.error("Throttled request send as proposal: {}. Exiting.", request);
@@ -1250,16 +1266,21 @@ public class Leader extends LearnerMaster {
             shutdown(msg);
             throw new XidRolloverException(msg);
         }
-
+        //1. 序列化写事务请求于 byte[] 数组中
         byte[] data = SerializeUtils.serializeRequest(request);
+        //2. 设置字节长度
         proposalStats.setLastBufferSize(data.length);
+        //3. 构造一个待序列化发送的 QuorumPacket 数据包，其 Jute 框架中 Record 接口的子类
         QuorumPacket pp = new QuorumPacket(Leader.PROPOSAL, request.zxid, data, null);
-
+        //4. 构造一个新的 Proposal 实例
         Proposal p = new Proposal();
+        //5. QuorumPacket 实例作为 Proposal 的字段
         p.packet = pp;
+        //6. Request 实例作为 Proposal 的字段
         p.request = request;
-
+        //这里存在并发安全性问题，因此这里对 Leader 上锁
         synchronized (this) {
+            //7. QuorumVerifier 作为 Proposal 的字段
             p.addQuorumVerifier(self.getQuorumVerifier());
 
             if (request.getHdr().getType() == OpCode.reconfig) {
@@ -1273,7 +1294,9 @@ public class Leader extends LearnerMaster {
             LOG.debug("Proposing:: {}", request);
 
             lastProposed = p.packet.getZxid();
+            //8. 将 Proposal 加入到队列 outstandingProposals 中去，这里的 outstanding 含义是尚未解决（一致性 2PC 共识）的
             outstandingProposals.put(lastProposed, p);
+            //9. 将 QuorumPacket 加入到所有 LearnerHandler 实例内的 queuedPackets 队列中，等待被消费
             sendPacket(pp);
         }
         ServerMetrics.getMetrics().PROPOSAL_COUNT.add(1);
@@ -1424,11 +1447,12 @@ public class Leader extends LearnerMaster {
      *
      * 理解这个方法最重要的地方在于我们要知道每一个 Learner 向当前 Leader 发送第一个表示其状态的数据包后都会走到这里
      * 而每一个 Learner 在 Leader 处都对应一个线程，因此这个方法实际上是一个并发执行的方法
+     * 注意事项：当前 Leader 节点对应的 QuorumPeer 的 run() 方法也会因为执行此方法而阻塞，因此当前节点也会加入到 connectingFollowers 容器中
      * 因此：首先，方法的执行完全在 Leader.connectingFollowers 锁语句块下，确保了线程安全
      *      其次，此方法在 Leader 没有达成共识以及未超时的情况下会阻塞 Learner 在 Leader 处对应的线程
      *      最后，线程唤醒的方式是 Leader 节点逐渐受到超过半数的 Follower 节点的连接，
      *      一开始阻塞的线程依赖于其余 Learner 在 Leader 处对应的线程
-     * @return 返回值为 Leader 选举过程中最大的 epoch 值
+     * @return 返回值为 Leader 选举过程中最大的 epoch +1
      * @throws InterruptedException
      * @throws IOException
      */
